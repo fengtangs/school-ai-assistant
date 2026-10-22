@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from agentkit import list_agents, get_agent, get_default_agent_id, build_all
 from core.embeddings import get_embedding_provider
-from core.llm import RECOMMENDED_MODELS, list_custom_models
+from core.llm import RECOMMENDED_MODELS, list_custom_models, explain_llm_error
 from core.teacher_api import router as teacher_router
 from core.homework_api import router as homework_router
 
@@ -168,7 +168,12 @@ def chat(q: Query, stream: bool = QueryParam(False)):
 
     # 非流式：直接返回完整 JSON（向后兼容）
     if not stream:
-        return agent.ask(q.question.strip(), model=q.model)
+        try:
+            return agent.ask(q.question.strip(), model=q.model)
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=explain_llm_error(e))
 
     # 流式：以 SSE（text/event-stream）逐事件推送 ask_stream 的结果
     def event_stream():
@@ -176,7 +181,7 @@ def chat(q: Query, stream: bool = QueryParam(False)):
             for ev in agent.ask_stream(q.question.strip(), model=q.model):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': explain_llm_error(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
