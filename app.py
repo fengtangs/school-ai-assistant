@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from agentkit import list_agents, get_agent, get_default_agent_id, build_all
 from core.embeddings import get_embedding_provider
+from core.llm import RECOMMENDED_MODELS, list_custom_models
 
 app = FastAPI(title="校园AI问答助手（多智能体）", version="0.2.0")
 app.add_middleware(
@@ -48,6 +49,7 @@ _embedding_provider_name = _embedding_provider_label()
 class Query(BaseModel):
     question: str
     agent: str = None  # 智能体 id，留空则用默认
+    model: str = None  # 可选：临时指定模型，留空则用 .env 里的默认模型
 
 
 @app.get("/")
@@ -55,6 +57,42 @@ def index():
     if os.path.exists(UI_PATH):
         return FileResponse(UI_PATH)
     return {"message": "UI 未找到，请访问 /docs 使用接口"}
+
+
+@app.get("/api/models")
+def models(refresh: bool = QueryParam(False)):
+    """可选模型列表。
+
+    默认返回经过实测验证、可直接对话的精选模型（RECOMMENDED_MODELS），
+    并附带当前默认模型。refresh=true 时会实时向网关拉取全部模型 id，
+    便于发现新上架的模型（其中混有图像/语音/OCR/审核模型，需自行甄别）。
+
+    仅 custom 后端支持运行时切换模型；ollama / deepseek 后端返回空的可选项。
+    """
+    current = None
+    try:
+        provider = os.getenv("LLM_PROVIDER", "ollama").lower()
+        if provider in ("custom", "tokensd"):
+            current = os.getenv("CUSTOM_MODEL", "deepseek-v4-flash")
+        elif provider == "deepseek":
+            current = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        else:
+            current = os.getenv("OLLAMA_MODEL", "deepseek-r1:14b")
+    except Exception:  # noqa: BLE001
+        pass
+
+    switchable = os.getenv("LLM_PROVIDER", "ollama").lower() in ("custom", "tokensd")
+    payload = {
+        "switchable": switchable,
+        "current": current,
+        "models": RECOMMENDED_MODELS if switchable else [],
+    }
+    if refresh and switchable:
+        try:
+            payload["all_models"] = list_custom_models()
+        except Exception as e:  # noqa: BLE001
+            payload["all_models_error"] = str(e)
+    return payload
 
 
 @app.get("/api/agents")
@@ -94,12 +132,12 @@ def chat(q: Query, stream: bool = QueryParam(False)):
 
     # 非流式：直接返回完整 JSON（向后兼容）
     if not stream:
-        return agent.ask(q.question.strip())
+        return agent.ask(q.question.strip(), model=q.model)
 
     # 流式：以 SSE（text/event-stream）逐事件推送 ask_stream 的结果
     def event_stream():
         try:
-            for ev in agent.ask_stream(q.question.strip()):
+            for ev in agent.ask_stream(q.question.strip(), model=q.model):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"

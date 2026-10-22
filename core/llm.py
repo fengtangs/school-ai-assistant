@@ -15,9 +15,110 @@
 """
 import os
 import json
+import re
 
 import httpx
 from openai import OpenAI
+
+
+# ————————————————————————————————————————————————
+# 可选模型清单（仅列实测可用的对话模型）
+#
+# 网关 /models 返回 50 个，但其中混有图像生成（doubao-seedance/seedream）、
+# 语音识别（lucion-asr-model）、OCR（lucion-ocr-model）、向量化
+# （lucion-qwen3-embedding-8b）、内容审核（Qwen3Guard / lucion-*-guard）等
+# 非对话模型；另有一些实测返回 500/400/403（kimi-k3、qwen3.6-plus、
+# sensenova-u1-fast、ds-kimi-k2.7-code）。
+# 这里只放经过实测验证能正常对话的模型，避免用户选到不可用的。
+# ————————————————————————————————————————————————
+RECOMMENDED_MODELS = [
+    {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash", "note": "快，日常问答首选"},
+    {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "note": "强推理，复杂问题"},
+    {"id": "deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash", "note": "新版本，均衡"},
+    {"id": "glm-5.3", "label": "GLM-5.3（智谱）", "note": "中文理解强"},
+    {"id": "glm-5.3-flash", "label": "GLM-5.3 Flash", "note": "快，成本低"},
+    {"id": "kimi-k2.7", "label": "Kimi K2.7（月之暗面）", "note": "长文本见长"},
+    {"id": "qwen3.7-max", "label": "Qwen3.7 Max（通义千问）", "note": "综合能力强"},
+    {"id": "MiniMax-M3", "label": "MiniMax M3", "note": "思考内容内嵌在正文"},
+    {"id": "lucion-qwen3.5-122b-a10b", "label": "Qwen3.5 122B（本地部署）", "note": "校内算力"},
+]
+
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def split_think(text: str):
+    """把内嵌在正文里的 <think>...</think> 拆成 (thinking, content)。
+
+    有些模型（如 MiniMax-M3）不返回独立的 reasoning_content 字段，
+    而是把思考过程塞进 content 的 <think> 标签中。统一剥离后，
+    上层就能对所有模型使用同一套 "thinking / content" 双通道展示。
+    """
+    if not text:
+        return "", ""
+    think_parts = re.findall(r"<think>(.*?)</think>", text, flags=re.S | re.I)
+    content = re.sub(r"<think>.*?</think>", "", text, flags=re.S | re.I)
+    # 容错：只有开标签、没有闭合（被 max_tokens 截断时会这样）
+    m = re.search(r"<think>(.*)$", content, flags=re.S | re.I)
+    if m:
+        think_parts.append(m.group(1))
+        content = content[: m.start()]
+    return "".join(think_parts).strip(), content.strip()
+
+
+class _ThinkSplitter:
+    """流式版的 <think> 拆分器：逐块喂入，产出 (kind, piece)。
+
+    需要跨块持有状态（标签可能被切成两个 chunk），所以不能只用正则。
+    """
+
+    def __init__(self):
+        self._buf = ""
+        self._in_think = False
+
+    @staticmethod
+    def _safe_prefix(buf: str, tag: str) -> str:
+        """截出可安全输出的前缀：若尾部是 tag 的前缀片段，先扣住不输出。"""
+        for k in range(min(len(tag) - 1, len(buf)), 0, -1):
+            if buf.endswith(tag[:k]):
+                return buf[:-k]
+        return buf
+
+    def feed(self, text: str):
+        self._buf += text or ""
+        out = []
+        while True:
+            if not self._in_think:
+                i = self._buf.lower().find(_THINK_OPEN)
+                if i == -1:
+                    safe = self._safe_prefix(self._buf, _THINK_OPEN)
+                    if safe:
+                        out.append(("content", safe))
+                        self._buf = self._buf[len(safe):]
+                    break
+                if i > 0:
+                    out.append(("content", self._buf[:i]))
+                self._buf = self._buf[i + len(_THINK_OPEN):]
+                self._in_think = True
+            else:
+                j = self._buf.lower().find(_THINK_CLOSE)
+                if j == -1:
+                    safe = self._safe_prefix(self._buf, _THINK_CLOSE)
+                    if safe:
+                        out.append(("thinking", safe))
+                        self._buf = self._buf[len(safe):]
+                    break
+                if j > 0:
+                    out.append(("thinking", self._buf[:j]))
+                self._buf = self._buf[j + len(_THINK_CLOSE):]
+                self._in_think = False
+        return out
+
+    def flush(self):
+        if not self._buf:
+            return []
+        piece, self._buf = self._buf, ""
+        return [("thinking" if self._in_think else "content", piece)]
 
 
 def _env(name: str, default: str) -> str:
@@ -57,24 +158,27 @@ class _OpenAILikeLLM:
         self.model = model
         self.label = label
 
-    def generate(self, system_prompt: str, context: str, question: str) -> str:
+    def generate(self, system_prompt: str, context: str, question: str, model: str = None) -> str:
         max_tokens = int(_env("LLM_MAX_TOKENS", "2048"))
         resp = self.client.chat.completions.create(
-            model=self.model,
+            model=model or self.model,
             messages=_build_messages(system_prompt, _build_user_content(context, question)),
             temperature=0.3,
             max_tokens=max_tokens,
         )
         choice = resp.choices[0]
-        content = (choice.message.content or "").strip()
+        raw = choice.message.content or ""
+        # 剥离内嵌 <think>（MiniMax-M3 等），避免正文里露出标签
+        inline_think, content = split_think(raw)
+        content = content.strip()
         if content:
             return content
 
         # —— 空回答兜底 ——
-        # 思考型模型（deepseek-r1 / deepseek-v4-* 等）会先输出 reasoning_content，
+        # 思考型模型（deepseek-v4-* 等）会先输出 reasoning 内容，
         # 若 max_tokens 偏小，额度会被思考过程全部吃掉，导致 content 为空且
         # finish_reason=length。这里给出可读提示，而不是让前端显示一片空白。
-        reasoning = getattr(choice.message, "reasoning_content", "") or ""
+        reasoning = getattr(choice.message, "reasoning_content", "") or inline_think
         if choice.finish_reason == "length" and reasoning:
             return (
                 f"（模型思考内容已达上限，正式回答被截断，未能产出结果。\n"
@@ -84,7 +188,7 @@ class _OpenAILikeLLM:
             )
         return content
 
-    def stream_generate(self, system_prompt: str, context: str, question: str):
+    def stream_generate(self, system_prompt: str, context: str, question: str, model: str = None):
         """流式生成：逐块 yield (kind, text) 二元组。
 
         kind 取值：
@@ -95,12 +199,13 @@ class _OpenAILikeLLM:
         thinking，拿不到模型的思考过程），同样遵循该 (kind, text) 协议。
         """
         stream = self.client.chat.completions.create(
-            model=self.model,
+            model=model or self.model,
             messages=_build_messages(system_prompt, _build_user_content(context, question)),
             temperature=0.3,
             max_tokens=int(_env("LLM_MAX_TOKENS", "2048")),
             stream=True,
         )
+        splitter = _ThinkSplitter()
         for chunk in stream:
             if not chunk.choices:
                 continue
@@ -110,7 +215,13 @@ class _OpenAILikeLLM:
             if rc:
                 yield ("thinking", rc)
             if ct:
-                yield ("content", ct)
+                # 正文里可能内嵌 <think>（MiniMax-M3 等），交给拆分器分流
+                for kind, piece in splitter.feed(ct):
+                    if piece:
+                        yield (kind, piece)
+        for kind, piece in splitter.flush():
+            if piece:
+                yield (kind, piece)
 
 
 class DeepSeekLLM(_OpenAILikeLLM):
@@ -137,10 +248,10 @@ class OllamaLLM(_OpenAILikeLLM):
         b = base_url.rstrip("/")
         self.native_base = b[:-3] if b.endswith("/v1") else b
 
-    def stream_generate(self, system_prompt: str, context: str, question: str):
+    def stream_generate(self, system_prompt: str, context: str, question: str, model: str = None):
         """原生 /api/chat 流式：yield (kind, text)，kind 为 "thinking"/"content"。"""
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "stream": True,
             "options": {
                 "temperature": 0.3,

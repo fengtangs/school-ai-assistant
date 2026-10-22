@@ -49,9 +49,12 @@ git push origin dev_你的名字          # 推到自己的分支
 |----|------|----------|
 | `campus` | 校园小助手 🏫 | 学校概况、教务、学生管理、奖助学金、校园生活 |
 | `huajiyun` | 华小智（华技云ICT） 🤖 | 华技云华为ICT实训平台功能、华为 HCIA/HCIP/HCIE 认证与考点、项目背景 |
+| `deepseek` | 通用对话（不查知识库） 💬 | 无 RAG，直接对话；配合「模型」下拉可对比不同大模型效果 |
 
 > 想加新智能体？只需在 `agentkit/agents.json` 里加一条（id / 名称 / 知识库目录 / 系统提示词），
 > 把文档放进对应目录，运行 `python scripts/build_index.py` 即可。
+> **注意**：`get_default_agent_id()` 取的是 `agents.json` 里的**第一条**，第一条会作为默认智能体，
+> 别把没有知识库的智能体放在最前面。
 
 ## 功能
 - 基于 DeepSeek 大模型生成自然语言回答
@@ -172,9 +175,54 @@ CUSTOM_EMBEDDING_MODEL=lucion-qwen3-embedding-8b   # 4096 维
 > `mock` 完全召回不到考点手册 → 模型只能回答"参考信息中没有"；
 > `custom` 精准命中该手册（相似度 0.72 vs 次名 0.55）→ 完整答出 6 大考点及分值。
 
+## 切换模型（custom 后端）
+
+网关提供 50 个模型，网页右上角有 **「模型」下拉框**，可随时切换、对比效果，无需改配置或重启。
+
+接口层同样支持——`/api/chat` 增加可选 `model` 参数，临时覆盖 `.env` 里的默认模型：
+
+```bash
+curl -X POST http://localhost:10086/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question":"信息工程学院有哪些专业？","agent":"campus","model":"glm-5.3"}'
+```
+
+```bash
+# 查看可切换模型（精选列表 + 当前默认）
+curl http://localhost:10086/api/models
+# 实时拉取网关全部 50 个模型 id（便于发现新上架模型）
+curl "http://localhost:10086/api/models?refresh=true"
+```
+
+### 精选模型（均经实测验证可正常对话）
+
+| 模型 | 特点 |
+|---|---|
+| `deepseek-v4-flash` | 快，日常问答首选（默认） |
+| `deepseek-v4-pro` | 强推理，复杂问题 |
+| `deepseek-v4.1-flash` | 新版本，均衡 |
+| `glm-5.3` / `glm-5.3-flash` | 智谱，中文理解强 |
+| `kimi-k2.7` | 月之暗面，长文本见长 |
+| `qwen3.7-max` | 通义千问，综合能力强 |
+| `MiniMax-M3` | 思考内嵌在正文（已做兼容剥离） |
+| `lucion-qwen3.5-122b-a10b` | 本地部署，校内算力 |
+
+> ⚠️ **不是所有 50 个模型都能对话**。实测发现以下类型不可用于聊天：
+> 图像生成（`doubao-seedance-*` / `seedream-*`）、语音识别（`lucion-asr-model`）、
+> OCR（`lucion-ocr-model`）、向量化（`lucion-qwen3-embedding-8b`）、
+> 内容审核（`Qwen3Guard-*` / `lucion-*-guard`）；
+> 另有 `kimi-k3`（500）、`qwen3.6-plus`（400 无可用上游）、
+> `sensenova-u1-fast`（403 无定价）、`ds-kimi-k2.7-code`（500）暂时不可用。
+> 因此下拉框只放**精选可用列表**，避免选到报错的模型。
+
+> 💡 有些模型（如 MiniMax-M3）不返回独立的 `reasoning_content`，而是把思考过程
+> 内嵌在正文的 `<think>...</think>` 标签里。代码已统一剥离并归入「思考过程」折叠块，
+> 因此换模型后 UI 表现一致，正文不会露出标签。
+
 ## 接口说明
 - `GET  /api/agents`   列出所有智能体（id/名称/图标）与默认智能体
-- `POST /api/chat`      body: `{"question": "...", "agent": "huajiyun"}` → 答案、来源、所用智能体
+- `GET  /api/models`   可切换模型列表（`?refresh=true` 拉取网关全部模型）
+- `POST /api/chat`      body: `{"question": "...", "agent": "huajiyun", "model": "glm-5.3"}` → 答案、来源、所用智能体、所用模型
 - `POST /api/rebuild`   body 可选 `{"agent": "huajiyun"}` 重建指定智能体，或不带 body 重建全部
 - `GET  /api/health`   服务状态、各智能体索引条数、模型就绪情况
 

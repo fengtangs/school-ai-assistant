@@ -96,7 +96,8 @@ class Agent:
         self.store.add_documents(chunks, metadatas, ids)
         return len(chunks)
 
-    def ask(self, question: str) -> dict:
+    def ask(self, question: str, model: str = None) -> dict:
+        """非流式问答。model 可选，用于临时指定模型（不传则用配置里的默认模型）。"""
         sources = []
         retrieved = []
         if self.use_rag and self.store is not None:
@@ -109,7 +110,7 @@ class Agent:
             # 无 RAG：不检索，直接以空上下文对话
             context = ""
         if self.llm:
-            answer = self.llm.generate(self.system_prompt, context, question)
+            answer = self.llm.generate(self.system_prompt, context, question, model=model)
         else:
             answer = self._fallback(question, retrieved)
         return {
@@ -118,9 +119,10 @@ class Agent:
             "llm_ready": self.llm is not None,
             "agent_id": self.agent_id,
             "agent_name": self.name,
+            "model": model or getattr(self.llm, "model", None),
         }
 
-    def ask_stream(self, question: str):
+    def ask_stream(self, question: str, model: str = None):
         """流式问答：返回一个生成器，依次产出事件字典：
 
           {"type": "meta",     "sources": [...], "agent_id", "agent_name", "llm_ready"}
@@ -148,12 +150,15 @@ class Agent:
             "llm_ready": self.llm is not None,
             "agent_id": self.agent_id,
             "agent_name": self.name,
+            "model": model or getattr(self.llm, "model", None),
         }
 
         if self.llm:
             full = []
             full_thinking = []
-            for kind, piece in self.llm.stream_generate(self.system_prompt, context, question):
+            for kind, piece in self.llm.stream_generate(
+                self.system_prompt, context, question, model=model
+            ):
                 if kind == "thinking":
                     full_thinking.append(piece)
                     yield {"type": "thinking", "text": piece}

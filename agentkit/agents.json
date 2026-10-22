@@ -18,8 +18,8 @@
     },
     {
       "id": "deepseek",
-      "name": "\u539f\u59cb DeepSeek",
-      "icon": "\ud83d\udc8a",
+      "name": "\u901a\u7528\u5bf9\u8bdd\uff08\u4e0d\u67e5\u77e5\u8bc6\u5e93\uff09",
+      "icon": "\ud83d\udcac",
       "knowledge_dir": "",
       "system_prompt": "",
       "rag": false

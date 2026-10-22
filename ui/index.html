@@ -82,6 +82,10 @@
       <span>智能体</span>
       <select id="agentSel"></select>
     </div>
+    <div class="agent-pick" id="modelPick">
+      <span>模型</span>
+      <select id="modelSel"></select>
+    </div>
     <div class="status" id="status"><span class="dot warn"></span><span>连接中…</span></div>
   </div>
 </header>
@@ -104,9 +108,13 @@ const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const statusEl = document.getElementById('status');
 const agentSel = document.getElementById('agentSel');
+const modelSel = document.getElementById('modelSel');
+const modelPick = document.getElementById('modelPick');
 
 let agents = [];
 let currentAgent = null;
+let models = [];
+let currentModel = null;   // null = 跟随 .env 配置的默认模型
 
 function addMsg(role, text, sources) {
   const wrap = document.createElement('div');
@@ -143,6 +151,39 @@ async function loadAgents() {
     input.placeholder = '向「' + (agents.find(a => a.id === currentAgent) || {}).name + '」提问…';
   } catch (e) {
     agents = [];
+  }
+}
+
+async function loadModels() {
+  try {
+    const r = await fetch('/api/models');
+    const d = await r.json();
+    // 只有 custom 后端才支持运行时切换模型；否则隐藏选择器
+    if (!d.switchable || !(d.models || []).length) {
+      if (modelPick) modelPick.style.display = 'none';
+      return;
+    }
+    models = d.models;
+    currentModel = d.current || null;
+    modelSel.innerHTML = '';
+    // 若配置的默认模型不在精选列表内，补一项以便正确回显
+    if (currentModel && !models.some(m => m.id === currentModel)) {
+      const opt = document.createElement('option');
+      opt.value = currentModel;
+      opt.textContent = currentModel + '（配置默认）';
+      opt.selected = true;
+      modelSel.appendChild(opt);
+    }
+    models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.label + (m.note ? ' · ' + m.note : '');
+      opt.title = m.note || m.id;
+      if (m.id === currentModel) opt.selected = true;
+      modelSel.appendChild(opt);
+    });
+  } catch (e) {
+    if (modelPick) modelPick.style.display = 'none';
   }
 }
 
@@ -209,7 +250,11 @@ async function send() {
   try {
     const r = await fetch('/api/chat?stream=true', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ question: q, agent: currentAgent })
+      body: JSON.stringify({
+        question: q,
+        agent: currentAgent,
+        model: currentModel || null
+      })
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const reader = r.body.getReader();
@@ -283,6 +328,10 @@ agentSel.onchange = () => {
   checkHealth();
 };
 
+modelSel.onchange = () => {
+  currentModel = modelSel.value || null;
+};
+
 sendBtn.onclick = send;
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -297,7 +346,7 @@ document.getElementById('rebuild').onclick = async () => {
   addMsg('bot', '知识库已更新，共索引 ' + (d.indexed_chunks != null ? d.indexed_chunks : JSON.stringify(d.agents)) + ' 个片段。');
   checkHealth();
 };
-(async () => { await loadAgents(); await checkHealth(); })();
+(async () => { await loadAgents(); await loadModels(); await checkHealth(); })();
 </script>
 </body>
 </html>
