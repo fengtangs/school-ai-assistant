@@ -18,6 +18,9 @@
   header h1 { font-size: 16px; font-weight: 500; }
   header .sub { font-size: 12px; opacity: .85; margin-top: 2px; }
   .head-right { display: flex; align-items: center; gap: 14px; }
+  .link-btn { background: rgba(255,255,255,.16); color: #fff; border: none; border-radius: 8px;
+    padding: 6px 12px; font-size: 12px; cursor: pointer; text-decoration: none; }
+  .link-btn:hover { background: rgba(255,255,255,.28); }
   .agent-pick { display: flex; align-items: center; gap: 6px; font-size: 12px; }
   .agent-pick select {
     font-size: 13px; padding: 4px 8px; border-radius: 8px; border: none;
@@ -78,6 +81,7 @@
     <div class="sub">本地大模型驱动 · 多智能体 RAG</div>
   </div>
   <div class="head-right">
+    <a class="link-btn" href="/homework/student" target="_blank">📚 我的作业</a>
     <div class="agent-pick">
       <span>智能体</span>
       <select id="agentSel"></select>

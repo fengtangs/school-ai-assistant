@@ -16,8 +16,9 @@ from agentkit import list_agents, get_agent, get_default_agent_id, build_all
 from core.embeddings import get_embedding_provider
 from core.llm import RECOMMENDED_MODELS, list_custom_models
 from core.teacher_api import router as teacher_router
+from core.homework_api import router as homework_router
 
-app = FastAPI(title="校园AI问答助手（多智能体）", version="0.3.0")
+app = FastAPI(title="校园AI问答助手（多智能体）", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,9 +28,13 @@ app.add_middleware(
 )
 # 教师助手（资料上传 / 材料生成 / 文件下载）
 app.include_router(teacher_router)
+# 作业中心（AI 出题 / 布置 / 学情分析）
+app.include_router(homework_router)
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "ui", "index.html")
 TEACHER_UI_PATH = os.path.join(os.path.dirname(__file__), "ui", "teacher.html")
+TEACHER_HW_PATH = os.path.join(os.path.dirname(__file__), "ui", "homework_teacher.html")
+STUDENT_HW_PATH = os.path.join(os.path.dirname(__file__), "ui", "homework_student.html")
 
 
 def _embedding_provider_label() -> str:
@@ -70,6 +75,22 @@ def teacher_index():
     if os.path.exists(TEACHER_UI_PATH):
         return FileResponse(TEACHER_UI_PATH)
     raise HTTPException(status_code=404, detail="教师工作台页面未找到")
+
+
+@app.get("/homework/teacher")
+def homework_teacher_index():
+    """教师作业平台页面（AI 出题 / 布置 / 学情分析）。"""
+    if os.path.exists(TEACHER_HW_PATH):
+        return FileResponse(TEACHER_HW_PATH)
+    raise HTTPException(status_code=404, detail="教师作业平台页面未找到")
+
+
+@app.get("/homework/student")
+def homework_student_index():
+    """校园小助手·学生作业页面（按科目选作业、作答、查看成绩）。"""
+    if os.path.exists(STUDENT_HW_PATH):
+        return FileResponse(STUDENT_HW_PATH)
+    raise HTTPException(status_code=404, detail="学生作业页面未找到")
 
 
 @app.get("/api/models")

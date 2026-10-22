@@ -13,6 +13,9 @@ data/*.bak*/
 data/teachers/
 data/teacher_outputs/
 
+# 作业中心运行时数据（作业内容与学生提交记录，含个人信息，不入库）
+data/homework/
+
 # 虚拟环境
 venv/
 .env/

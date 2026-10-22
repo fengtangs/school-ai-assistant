@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>教师作业平台 · 校园AI助手</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --main: #185fa5; --main-dark: #124a80; --bg: #f1efe8; --card: #fff;
+    --line: #d3d1c7; --text: #2c2c2a; --muted: #888780;
+    --ok: #5dcaa5; --warn: #ef9f27; --err: #d14343;
+  }
+  body { font-family: -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; font-size: 14px; line-height: 1.6; }
+  header { background: var(--main); color:#fff; padding: 12px 20px; display:flex;
+    align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    position:sticky; top:0; z-index:30; box-shadow:0 1px 4px rgba(0,0,0,.12); }
+  header h1 { font-size:16px; font-weight:500; }
+  header .sub { font-size:12px; opacity:.85; margin-top:1px; }
+  .head-right { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .tid-wrap { display:flex; align-items:center; gap:6px; font-size:12px; }
+  .tid-wrap input { font-size:13px; padding:5px 9px; border-radius:8px; border:none;
+    width:130px; color:var(--main); font-weight:500; }
+  .link-btn { background:rgba(255,255,255,.16); color:#fff; border:none; border-radius:8px;
+    padding:6px 12px; font-size:12px; cursor:pointer; text-decoration:none; }
+  .link-btn:hover { background:rgba(255,255,255,.28); }
+
+  .layout { display:grid; grid-template-columns: 320px 1fr; gap:14px;
+    max-width:1280px; margin:0 auto; padding:14px; align-items:start; }
+  @media (max-width:900px){ .layout{ grid-template-columns:1fr; } }
+
+  .card { background:var(--card); border:.5px solid var(--line); border-radius:12px;
+    padding:14px; margin-bottom:14px; }
+  .card h2 { font-size:14px; font-weight:600; margin-bottom:10px;
+    display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .card h2 .hint { font-size:11px; color:var(--muted); font-weight:400; }
+
+  .fields { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+  @media (max-width:620px){ .fields{ grid-template-columns:1fr; } }
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field.full { grid-column:1 / -1; }
+  .field label { font-size:12px; color:#55534d; font-weight:500; }
+  .field label .req { color:var(--err); }
+  .field input, .field textarea, .field select {
+    font-family:inherit; font-size:13px; padding:7px 9px; border-radius:8px;
+    border:1px solid var(--line); background:#fff; color:var(--text); width:100%; }
+  .field input:focus, .field textarea:focus, .field select:focus { outline:none; border-color:var(--main); }
+  .field textarea { resize:vertical; min-height:54px; }
+  .row2 { display:flex; gap:10px; } .row2 > * { flex:1; }
+
+  .actions { display:flex; align-items:center; gap:10px; margin-top:14px; flex-wrap:wrap; }
+  .btn-primary { background:var(--main); color:#fff; border:none; border-radius:9px;
+    padding:9px 18px; font-size:13.5px; font-weight:500; cursor:pointer; }
+  .btn-primary:hover { background:var(--main-dark); }
+  .btn-primary:disabled { background:#b9c9d8; cursor:not-allowed; }
+  .btn-ghost { background:#fff; color:var(--main); border:1px solid var(--line);
+    border-radius:9px; padding:8px 14px; font-size:13px; cursor:pointer; }
+  .btn-ghost:hover { background:#f0f6fc; }
+  .btn-warn { background:var(--warn); color:#3a2a00; border:none; border-radius:9px;
+    padding:8px 14px; font-size:13px; cursor:pointer; }
+  .model-mini { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .model-mini select { font-size:12px; padding:4px 7px; border-radius:7px;
+    border:1px solid var(--line); background:#fff; color:var(--main); }
+
+  .hw-item { display:flex; flex-direction:column; gap:5px; padding:9px;
+    border:.5px solid var(--line); border-radius:10px; margin-bottom:9px; background:#fdfcf9; cursor:pointer; }
+  .hw-item:hover { border-color:#9ab8d6; }
+  .hw-item.on { border-color:var(--main); box-shadow:0 0 0 2px rgba(24,95,165,.12); background:#eef5fc; }
+  .hw-item .t { font-weight:600; font-size:13.5px; }
+  .hw-item .m { font-size:12px; color:var(--muted); }
+  .badge { display:inline-block; font-size:11px; padding:1px 8px; border-radius:20px; }
+  .badge.draft { background:#fdf6e7; color:#7a5510; }
+  .badge.assigned { background:#e9f8f2; color:#0d5c43; }
+  .hw-item .ops { display:flex; gap:8px; flex-wrap:wrap; margin-top:2px; }
+  .hw-item .ops button { font-size:11px; padding:3px 9px; border-radius:7px; border:none; cursor:pointer; }
+  .op-ana { background:#eef5fc; color:var(--main); }
+  .op-assign { background:#e9f8f2; color:#0d5c43; }
+  .op-del { background:#fdeaea; color:#8c2b2b; }
+  .empty { color:var(--muted); font-size:12.5px; text-align:center; padding:14px 0; }
+
+  /* —— 题目编辑 —— */
+  .qblock { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; background:#fdfcf9; }
+  .qhead { display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
+  .qtype { font-size:12px; padding:2px 10px; border-radius:20px; background:#eef5fc; color:var(--main); font-weight:600; }
+  .qhead .sc { font-size:12px; color:#55534d; display:flex; align-items:center; gap:5px; }
+  .qhead .sc input { width:64px; padding:4px 6px; }
+  .qhead .qdel { margin-left:auto; background:#fdeaea; color:#8c2b2b; border:none;
+    border-radius:7px; padding:4px 10px; font-size:12px; cursor:pointer; }
+  .qstem { width:100%; font-family:inherit; font-size:13.5px; padding:8px 10px;
+    border-radius:8px; border:1px solid var(--line); resize:vertical; min-height:50px; }
+  .opt-row { display:flex; align-items:center; gap:8px; margin-top:7px; }
+  .opt-row input[type=radio]{ width:auto; }
+  .opt-row input[type=text]{ flex:1; font-family:inherit; font-size:13px; padding:6px 8px;
+    border-radius:8px; border:1px solid var(--line); }
+  .opt-row.correct { background:#e9f8f2; border-radius:8px; padding:2px 4px; }
+  .judge-row { display:flex; gap:16px; margin-top:8px; font-size:13px; }
+  .judge-row label { display:flex; align-items:center; gap:5px; cursor:pointer; }
+  .qref { width:100%; font-family:inherit; font-size:13px; padding:7px 9px; margin-top:8px;
+    border-radius:8px; border:1px solid var(--line); resize:vertical; min-height:46px; }
+  .qana { width:100%; font-family:inherit; font-size:12.5px; padding:6px 9px; margin-top:7px;
+    border-radius:8px; border:1px dashed var(--line); resize:vertical; min-height:34px; color:#555; }
+
+  .alert { border-radius:9px; padding:10px 12px; font-size:12.5px; margin-top:10px; }
+  .alert.err { background:#fdeaea; color:#8c2b2b; border:.5px solid #f0c9c9; }
+  .alert.warn { background:#fdf6e7; color:#7a5510; border:.5px solid #f0e0bc; }
+  .alert.ok { background:#e9f8f2; color:#0d5c43; border:.5px solid #bde7d8; }
+  .spinner { display:inline-block; width:13px; height:13px; border:2px solid rgba(255,255,255,.4);
+    border-top-color:#fff; border-radius:50%; animation:sp .8s linear infinite; vertical-align:-2px; margin-right:6px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  .total-tag { font-size:13px; font-weight:600; }
+  .total-tag b { color:var(--main); }
+
+  /* —— 学情分析弹窗 —— */
+  .mask { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none;
+    align-items:flex-start; justify-content:center; z-index:50; padding:24px; overflow:auto; }
+  .mask.show { display:flex; }
+  .modal { background:#fff; border-radius:14px; width:min(880px,100%); padding:18px 20px; margin:auto; }
+  .modal h3 { font-size:16px; color:var(--main); margin-bottom:12px; }
+  .modal .close { float:right; cursor:pointer; font-size:20px; color:var(--muted); border:none; background:none; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin-bottom:14px; }
+  .kpi { background:#faf8f2; border:.5px solid #e3e0d4; border-radius:10px; padding:12px; text-align:center; }
+  .kpi .v { font-size:24px; font-weight:700; color:var(--main); }
+  .kpi .l { font-size:12px; color:var(--muted); margin-top:2px; }
+  .sec-title { font-size:13.5px; font-weight:600; margin:14px 0 8px; color:#333; }
+  .dist { display:flex; gap:6px; align-items:flex-end; height:120px; }
+  .dist .bar { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:4px; }
+  .dist .bar .fill { width:100%; background:var(--main); border-radius:6px 6px 0 0; min-height:2px; transition:height .3s; }
+  .dist .bar .lab { font-size:11px; color:var(--muted); }
+  .dist .bar .num { font-size:11px; font-weight:600; }
+  .wtable { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .wtable th, .wtable td { border-bottom:.5px solid #eee; padding:7px 8px; text-align:left; }
+  .wtable th { color:var(--muted); font-weight:500; }
+  .rate-bar { display:inline-block; height:8px; border-radius:4px; background:var(--ok); vertical-align:middle; margin-right:6px; }
+  .rate-bar.low { background:var(--err); }
+  .rate-bar.mid { background:var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>📚 教师作业平台</h1>
+    <div class="sub">AI 出题 · 一键布置到校园小助手 · 学情分析</div>
+  </div>
+  <div class="head-right">
+    <div class="tid-wrap">
+      <span>教师身份</span>
+      <input id="tid" placeholder="如 nsf" title="用于隔离你的作业与学情数据" />
+    </div>
+    <a class="link-btn" href="/teacher">教师工作台</a>
+    <a class="link-btn" href="/">校园问答</a>
+    <a class="link-btn" href="/homework/student" target="_blank">学生端 ↗</a>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- 左栏：我的作业 -->
+  <div>
+    <div class="card">
+      <h2>我的作业 <span class="hint" id="hwCount"></span></h2>
+      <div id="hwList"><div class="empty">还没有作业</div></div>
+    </div>
+  </div>
+
+  <!-- 右栏：出题与布置 -->
+  <div>
+    <div class="card">
+      <h2>① AI 智能出题 <span class="hint">基于你的教学资料命题更贴合</span></h2>
+      <div class="fields">
+        <div class="field"><label>科目 <span class="req">*</span></label><input id="f_subject" placeholder="如：数学"></div>
+        <div class="field"><label>作业标题 <span class="req">*</span></label><input id="f_title" placeholder="如：函数 第一章 练习"></div>
+        <div class="field"><label>章节 / 知识点</label><input id="f_topic" placeholder="如：一次函数"></div>
+        <div class="field"><label>适用对象</label><input id="f_students" placeholder="如：2026级人工智能1班"></div>
+        <div class="field"><label>难度</label>
+          <select id="f_difficulty"><option>简单</option><option selected>中等</option><option>较难</option></select>
+        </div>
+        <div class="field"><label>补充要求</label><input id="f_requirements" placeholder="如：侧重计算与应用"></div>
+        <div class="field"><label>选择题数量</label><input id="f_n_choice" type="number" min="0" value="5"></div>
+        <div class="field"><label>判断题数量</label><input id="f_n_judge" type="number" min="0" value="5"></div>
+        <div class="field"><label>简答题数量</label><input id="f_n_short" type="number" min="0" value="2"></div>
+      </div>
+      <div class="actions">
+        <button class="btn-primary" id="designBtn">✨ AI 生成题目</button>
+        <div class="model-mini"><span>模型</span><select id="modelSel"></select></div>
+        <button class="btn-ghost" id="addQBtn">＋ 手动加题</button>
+      </div>
+      <div id="msgBox"></div>
+    </div>
+
+    <div class="card" id="editorCard" style="display:none">
+      <h2>② 题目编辑与布置 <span class="hint">可修改 / 增删，满分自动归一至 100</span></h2>
+      <div id="qList"></div>
+      <div class="actions" style="margin-top:6px">
+        <span class="total-tag">当前总分：<b id="totalScore">0</b> / 100</span>
+        <button class="btn-ghost" id="addQBtn2">＋ 手动加题</button>
+      </div>
+
+      <div style="border-top:.5px dashed var(--line); margin:14px 0 4px"></div>
+      <div class="fields">
+        <div class="field"><label>布置班级</label><input id="f_class" placeholder="如：2026级人工智能1班"></div>
+        <div class="field"><label>截止日期</label><input id="f_deadline" type="date"></div>
+      </div>
+      <div class="actions">
+        <button class="btn-primary" id="saveDraftBtn">保存草稿</button>
+        <button class="btn-warn" id="assignBtn">📤 布置到校园小助手</button>
+        <span id="saveMsg"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 学情分析弹窗 -->
+<div class="mask" id="mask">
+  <div class="modal">
+    <button class="close" id="closeMask">×</button>
+    <h3 id="anaTitle">学情分析</h3>
+    <div id="anaBody"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const tidInput=$('#tid'), hwList=$('#hwList'), hwCount=$('#hwCount');
+const designBtn=$('#designBtn'), msgBox=$('#msgBox'), modelSel=$('#modelSel');
+const editorCard=$('#editorCard'), qList=$('#qList'), totalScore=$('#totalScore');
+const saveDraftBtn=$('#saveDraftBtn'), assignBtn=$('#assignBtn'), saveMsg=$('#saveMsg');
+const mask=$('#mask'), anaBody=$('#anaBody'), anaTitle=$('#anaTitle');
+
+let teacherId = localStorage.getItem('hw_teacher_id') || '';
+let homeworks = [], editingId = null;
+let draft = { subject:'', title:'', description:'', assign_class:'', deadline:'', questions:[] };
+
+tidInput.value = teacherId;
+tidInput.onchange = () => { teacherId = tidInput.value.trim(); localStorage.setItem('hw_teacher_id', teacherId); loadHomeworks(); };
+
+function needTid(){ if(!teacherId){ showMsg('warn','请先填写「教师身份」（可用姓名拼音，如 nsf），用于隔离你的作业与数据。'); tidInput.focus(); return true;} return false; }
+function showMsg(kind,text){ const cls = kind==='err'?'err':(kind==='ok'?'ok':'warn'); msgBox.innerHTML = text?`<div class="alert ${cls}">${escapeHtml(text)}</div>`:''; }
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function qtLabel(t){ return ({choice:'选择题',judge:'判断题',short:'简答题'})[t]||t; }
+
+// —————— 模型 ——————
+async function loadModels(){
+  try{ const r=await fetch('/api/models'); const d=await r.json();
+    modelSel.innerHTML='<option value="">默认</option>';
+    if(d.switchable){ (d.models||[]).forEach(m=>{ const o=document.createElement('option'); o.value=m.id; o.textContent=m.label; if(m.id===d.current)o.selected=true; modelSel.appendChild(o);}); }
+  }catch(e){}
+}
+
+// —————— 作业列表 ——————
+async function loadHomeworks(){
+  if(!teacherId){ hwList.innerHTML='<div class="empty">填写教师身份后查看</div>'; hwCount.textContent=''; return; }
+  try{
+    const r=await fetch('/api/homework/list?teacher_id='+encodeURIComponent(teacherId));
+    const d=await r.json(); homeworks=d.homeworks||[];
+    hwCount.textContent = homeworks.length?`${homeworks.length} 份`:'';
+    if(!homeworks.length){ hwList.innerHTML='<div class="empty">还没有作业，先用 AI 生成一份吧</div>'; return; }
+    hwList.innerHTML='';
+    homeworks.forEach(h=>{
+      const el=document.createElement('div'); el.className='hw-item'+(h.id===editingId?' on':'');
+      const badge = h.status==='assigned'?'<span class="badge assigned">已布置</span>':'<span class="badge draft">草稿</span>';
+      el.innerHTML=`<div class="t">${escapeHtml(h.title)} ${badge}</div>
+        <div class="m">${escapeHtml(h.subject)} · ${h.question_count}题 · 满分${h.total_score}</div>
+        <div class="ops">
+          <button class="op-ana">学情分析</button>
+          ${h.status==='assigned'?'<button class="op-assign">撤回</button>':'<button class="op-assign">布置</button>'}
+          <button class="op-del">删除</button>
+        </div>`;
+      el.onclick=(e)=>{ if(e.target.tagName==='BUTTON')return; loadEditor(h.id); };
+      el.querySelector('.op-ana').onclick=(e)=>{ e.stopPropagation(); openAnalytics(h.id); };
+      el.querySelector('.op-assign').onclick=(e)=>{ e.stopPropagation(); toggleAssign(h.id); };
+      el.querySelector('.op-del').onclick=(e)=>{ e.stopPropagation(); delHomework(h.id); };
+      hwList.appendChild(el);
+    });
+  }catch(e){ hwList.innerHTML='<div class="empty">读取失败</div>'; }
+}
+
+// —————— AI 出题 ——————
+designBtn.onclick = async ()=>{
+  if(needTid()) return;
+  const params={
+    teacher_id:teacherId,
+    subject:$('#f_subject').value.trim(),
+    title:$('#f_title').value.trim(),
+    topic:$('#f_topic').value.trim(),
+    students:$('#f_students').value.trim(),
+    difficulty:$('#f_difficulty').value,
+    n_choice:parseInt($('#f_n_choice').value)||0,
+    n_judge:parseInt($('#f_n_judge').value)||0,
+    n_short:parseInt($('#f_n_short').value)||0,
+    requirements:$('#f_requirements').value.trim(),
+    model:modelSel.value||null
+  };
+  if(!params.subject||!params.title){ showMsg('warn','请填写科目和作业标题'); return; }
+  if(params.n_choice+params.n_judge+params.n_short<1){ showMsg('warn','题目数量至少 1 道'); return; }
+  designBtn.disabled=true; designBtn.innerHTML='<span class="spinner"></span>AI 生成中（约 20–60 秒）…';
+  showMsg('warn','正在生成题目，请稍候。');
+  try{
+    const r=await fetch('/api/homework/design',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||('HTTP '+r.status));
+    editingId=null;
+    draft={ subject:d.subject, title:d.title, description:d.description||'', assign_class:'', deadline:'', questions:d.questions };
+    renderEditor();
+    showMsg('ok',`已生成 ${d.questions.length} 道题，总分 ${d.total_score}。可修改后布置。`);
+  }catch(e){ showMsg('err','生成失败：'+e.message); }
+  finally{ designBtn.disabled=false; designBtn.textContent='✨ AI 生成题目'; }
+};
+
+// —————— 题目编辑渲染 ——————
+function renderEditor(){
+  editorCard.style.display='block';
+  $('#f_subject').value=draft.subject; $('#f_title').value=draft.title;
+  $('#f_class').value=draft.assign_class||''; $('#f_deadline').value=draft.deadline||'';
+  qList.innerHTML='';
+  draft.questions.forEach((q,i)=>qList.appendChild(renderQuestion(q,i)));
+  updateTotal();
+}
+
+function renderQuestion(q,i){
+  const el=document.createElement('div'); el.className='qblock'; el.dataset.i=i;
+  let inner=`<div class="qhead">
+      <span class="qtype">${qtLabel(q.type)}</span>
+      <span class="sc">分值 <input type="number" min="0" class="qscore" value="${q.score}"></span>
+      <button class="qdel">删除</button>
+    </div>
+    <textarea class="qstem" placeholder="题干">${escapeHtml(q.stem||'')}</textarea>`;
+  if(q.type==='choice'){
+    (q.options||[]).forEach((opt,oi)=>{
+      const checked = (q.answer===oi)?'checked':'';
+      inner+=`<div class="opt-row ${checked?'correct':''}">
+        <input type="radio" name="ans_${i}" ${checked} data-oi="${oi}">
+        <input type="text" class="opttext" value="${escapeHtml(opt||'')}">
+      </div>`;
+    });
+  } else if(q.type==='judge'){
+    const t=q.answer===true, f=q.answer===false;
+    inner+=`<div class="judge-row">
+      <label><input type="radio" name="ans_${i}" ${t?'checked':''} data-j="1">正确</label>
+      <label><input type="radio" name="ans_${i}" ${f?'checked':''} data-j="0">错误</label>
+    </div>`;
+  } else {
+    inner+=`<textarea class="qref" placeholder="参考答案 / 评分要点">${escapeHtml(q.reference||'')}</textarea>`;
+  }
+  inner+=`<textarea class="qana" placeholder="解析（可选）">${escapeHtml(q.analysis||'')}</textarea>`;
+  el.innerHTML=inner;
+
+  el.querySelector('.qdel').onclick=()=>{ draft.questions.splice(i,1); renderEditor(); };
+  el.querySelector('.qscore').oninput=updateTotal;
+  el.querySelector('.qstem').oninput=e=>{ draft.questions[i].stem=e.target.value; };
+  el.querySelector('.qana').oninput=e=>{ draft.questions[i].analysis=e.target.value; };
+  el.querySelectorAll('.opttext').forEach((inp,oi)=> inp.oninput=e=>{ draft.questions[i].options[oi]=e.target.value; });
+  el.querySelectorAll('input[type=radio]').forEach(rad=>{
+    rad.onchange=()=>{
+      if(rad.dataset.oi!==undefined) draft.questions[i].answer=parseInt(rad.dataset.oi);
+      else if(rad.dataset.j!==undefined) draft.questions[i].answer=(rad.dataset.j==='1');
+      // 高亮正确项
+      el.querySelectorAll('.opt-row').forEach(r=>r.classList.remove('correct'));
+      if(rad.dataset.oi!==undefined) rad.closest('.opt-row').classList.add('correct');
+    };
+  });
+  if(q.type==='short'){ el.querySelector('.qref').oninput=e=>{ draft.questions[i].reference=e.target.value; }; }
+  return el;
+}
+
+function updateTotal(){
+  let t=0; draft.questions.forEach(q=>{ const v=parseFloat(qList.querySelector(`.qblock[data-i="${draft.questions.indexOf(q)}"] .qscore`)?.value); if(!isNaN(v)){ q.score=v; t+=v; } });
+  totalScore.textContent=t.toFixed(0);
+}
+
+function addQuestion(){
+  draft.questions.push({ type:'choice', stem:'', options:['A. ','B. ','C. ','D. '], answer:0, score:10, analysis:'' });
+  renderEditor();
+}
+$('#addQBtn').onclick=addQuestion; $('#addQBtn2').onclick=addQuestion;
+
+// —————— 保存 / 布置 ——————
+function collectQuestions(){
+  // 从 DOM 回填分值到 draft（renderEditor 已绑定 oninput，这里再兜底读一次）
+  qList.querySelectorAll('.qblock').forEach(b=>{
+    const i=parseInt(b.dataset.i); const q=draft.questions[i]; if(!q)return;
+    q.score=parseFloat(b.querySelector('.qscore').value)||0;
+    q.stem=b.querySelector('.qstem').value;
+    q.analysis=b.querySelector('.qana').value;
+    if(q.type==='choice'){ q.options=[...b.querySelectorAll('.opttext')].map(x=>x.value);
+      const r=b.querySelector('input[type=radio]:checked'); if(r&&r.dataset.oi!==undefined)q.answer=parseInt(r.dataset.oi); }
+    if(q.type==='judge'){ const r=b.querySelector('input[type=radio]:checked'); if(r)q.answer=(r.dataset.j==='1'); }
+    if(q.type==='short'){ q.reference=b.querySelector('.qref').value; }
+  });
+}
+
+async function doSave(status){
+  collectQuestions();
+  if(!draft.questions.length){ showMsg('warn','请先生成或添加题目'); return; }
+  draft.subject=$('#f_subject').value.trim()||draft.subject;
+  draft.title=$('#f_title').value.trim()||draft.title;
+  draft.assign_class=$('#f_class').value.trim();
+  draft.deadline=$('#f_deadline').value;
+  const body={ id:editingId||'', teacher_id:teacherId, subject:draft.subject, title:draft.title,
+    description:draft.description, assign_class:draft.assign_class, deadline:draft.deadline,
+    status:status, questions:draft.questions };
+  saveMsg.textContent='保存中…';
+  try{
+    const r=await fetch('/api/homework/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json(); if(!r.ok) throw new Error(d.detail||('HTTP '+r.status));
+    editingId=d.id;
+    saveMsg.innerHTML='<span style="color:#0d5c43">已保存 ✓</span>';
+    await loadHomeworks();
+    if(status==='assigned'){ showMsg('ok','已布置到校园小助手，学生可在学生端按科目选择作答。'); }
+    return true;
+  }catch(e){ saveMsg.textContent=''; showMsg('err','保存失败：'+e.message); return false; }
+}
+saveDraftBtn.onclick=()=>doSave('draft');
+assignBtn.onclick=()=>doSave('assigned');
+
+async function loadEditor(id){
+  try{
+    const r=await fetch('/api/homework/'+id); const d=await r.json(); if(!r.ok)throw new Error(d.detail);
+    editingId=id;
+    draft={ subject:d.subject, title:d.title, description:d.description||'',
+      assign_class:d.assign_class||'', deadline:d.deadline||'', questions:d.questions };
+    renderEditor();
+    msgBox.innerHTML='';
+    editorCard.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }catch(e){ showMsg('err','打开失败：'+e.message); }
+}
+
+async function toggleAssign(id){
+  const h=homeworks.find(x=>x.id===id);
+  const to=h.status==='assigned'?'unassign':'assign';
+  const r=await fetch(`/api/homework/${to}/${id}`,{method:'POST'}); const d=await r.json();
+  if(r.ok){ await loadHomeworks(); showMsg('ok', to==='assign'?'已布置到校园小助手':'已撤回布置'); }
+  else showMsg('err', d.detail||'操作失败');
+}
+
+async function delHomework(id){
+  if(!confirm('确定删除这份作业？相关提交记录也会一并删除。')) return;
+  const r=await fetch('/api/homework/'+id,{method:'DELETE'}); const d=await r.json();
+  if(r.ok){ if(editingId===id){ editorCard.style.display='none'; editingId=null; } await loadHomeworks(); showMsg('ok','已删除'); }
+  else showMsg('err', d.detail||'删除失败');
+}
+
+// —————— 学情分析 ——————
+async function openAnalytics(id){
+  anaTitle.textContent='学情分析';
+  anaBody.innerHTML='<div class="alert warn">加载中…</div>';
+  mask.classList.add('show');
+  try{
+    const [aR,sR]=await Promise.all([
+      fetch('/api/homework/analytics/'+id), fetch('/api/homework/submissions/'+id)
+    ]);
+    const a=await aR.json(); const s=await sR.json();
+    if(!aR.ok) throw new Error(a.detail||'加载失败');
+    renderAnalytics(a, s.submissions||[]);
+  }catch(e){ anaBody.innerHTML=`<div class="alert err">${escapeHtml(e.message)}</div>`; }
+}
+$('#closeMask').onclick=()=>mask.classList.remove('show');
+mask.onclick=(e)=>{ if(e.target===mask) mask.classList.remove('show'); };
+
+function rateClass(r){ return r>=0.8?'':(r>=0.6?'mid':'low'); }
+function renderAnalytics(a, subs){
+  const dist=a.score_distribution||{};
+  const distHtml=Object.entries(dist).map(([k,v])=>{
+    const maxv=Math.max(1,...Object.values(dist));
+    const h=(v/maxv*100);
+    return `<div class="bar"><div class="num">${v}</div><div class="fill" style="height:${h}%"></div><div class="lab">${k}</div></div>`;
+  }).join('');
+  const wr=(a.wrong_ranking||[]).map(q=>{
+    const pct=Math.round(q.correct_rate*100);
+    return `<tr>
+      <td><span class="qtype">${qtLabel(q.type)}</span></td>
+      <td>${escapeHtml(q.stem)}…</td>
+      <td>${q.max}分</td>
+      <td><span class="rate-bar ${rateClass(q.correct_rate)}" style="width:${pct}px"></span>${pct}%</td>
+      <td style="color:#d14343">${q.wrong_count}人错</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" class="empty">暂无错题数据（尚未有提交或全员答对）</td></tr>';
+
+  const subHtml=(subs||[]).map(s=>{
+    const dt=new Date((s.submitted_at||0)*1000);
+    const hm=`${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+    const tag=s.needs_review?'<span class="badge draft">待批改</span>':(s.passed?'<span class="badge assigned">及格</span>':'<span class="badge draft">不及格</span>');
+    return `<tr><td>${escapeHtml(s.student_name)}</td><td>${escapeHtml(s.student_class||'')}</td><td>${hm}</td><td><b>${s.score}</b>/${s.total}</td><td>${tag}</td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="empty">还没有学生提交</td></tr>';
+
+  anaBody.innerHTML=`
+    <div class="kpis">
+      <div class="kpi"><div class="v">${a.submit_count}</div><div class="l">提交人次</div></div>
+      <div class="kpi"><div class="v">${a.student_count}</div><div class="l">参与人数</div></div>
+      <div class="kpi"><div class="v">${a.avg_score}</div><div class="l">平均分</div></div>
+      <div class="kpi"><div class="v">${Math.round(a.accuracy_rate*100)}%</div><div class="l">正确率</div></div>
+      <div class="kpi"><div class="v">${Math.round(a.pass_rate*100)}%</div><div class="l">及格率</div></div>
+    </div>
+    <div class="sec-title">分数段分布（满分 ${a.total_score}）</div>
+    <div class="dist">${distHtml}</div>
+    <div class="sec-title">错题排行（按错误人数）</div>
+    <table class="wtable"><thead><tr><th>题型</th><th>题目</th><th>分值</th><th>正确率</th><th>错误</th></tr></thead><tbody>${wr}</tbody></table>
+    <div class="sec-title">提交记录</div>
+    <table class="wtable"><thead><tr><th>学生</th><th>班级</th><th>提交时间</th><th>得分</th><th>状态</th></tr></thead><tbody>${subHtml}</tbody></table>
+    ${a.needs_review_count?`<div class="alert warn" style="margin-top:12px">有 ${a.needs_review_count} 份提交含需教师人工批改的简答题，请到学生端或提交记录中复核评分。</div>`:''}
+  `;
+}
+
+(async ()=>{ await loadModels(); await loadHomeworks(); })();
+</script>
+</body>
+</html>
