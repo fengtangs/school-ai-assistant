@@ -11,12 +11,18 @@
 | 分支 | 用途 |
 |------|------|
 | `main` | 稳定版本，部署到服务器 / 华技云集成的分支 |
-| `dev` | 日常开发分支（本项目当前开发主线） |
+| `dev` | 集成主线，各成员把自己的开发分支合并到这里 |
+| `dev_<姓名>` | 个人开发分支（如 `dev_nsf`），每人一个，互不干扰 |
 
 ### 成员首次拉取
 ```bash
 git clone -b dev git@github.com:fengtangs/school-ai-assistant.git
 cd school-ai-assistant
+
+# 建自己的个人分支（避免多人直接改 dev 造成冲突）
+git checkout -b dev_你的名字
+git push -u origin dev_你的名字
+
 python -m venv venv
 # Windows:  venv\Scripts\activate
 pip install -r requirements.txt
@@ -27,8 +33,9 @@ cp .env.example .env      # Windows: copy .env.example .env
 ```bash
 git add .
 git commit -m "feat: 新增XX功能"
-git push origin dev                 # 推到 dev 分支
-# 验证通过后，再开 PR 合并到 main
+git push origin dev_你的名字          # 推到自己的分支
+# 然后在 GitHub 上开 PR：dev_你的名字 → dev
+# 验证通过后，再由 dev 合并到 main
 ```
 
 ### 配置要求
