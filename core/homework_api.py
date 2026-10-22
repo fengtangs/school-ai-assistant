@@ -22,6 +22,7 @@
     POST /api/homework/rescore               教师手动批改简答题（{hw_id,sub_id,qid,score}）
 """
 import json
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -43,7 +44,7 @@ class DesignReq(BaseModel):
     n_judge: int = 5
     n_short: int = 2
     requirements: str = ""
-    model: str = None
+    model: Optional[str] = None  # Pydantic v2 下须显式 Optional，否则前端传 null 报 422
 
 
 class SaveReq(BaseModel):
@@ -187,7 +188,29 @@ def design(req: DesignReq):
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"生成作业失败: {e}")
+        raise HTTPException(status_code=500, detail=_explain_design_error(e))
+
+
+def _explain_design_error(e: Exception) -> str:
+    """把底层异常翻译成教师能看懂、能自助排查的中文提示。"""
+    msg = str(e) or e.__class__.__name__
+    low = msg.lower()
+    if "connection" in low or "timed out" in low or "timeout" in low:
+        return (
+            "无法连接大模型服务，AI 出题未执行。请依次排查："
+            "① 项目根目录是否有 .env（可参考 .env.example 创建）；"
+            "② LLM_PROVIDER 选择的是哪个后端；"
+            "③ 若用 ollama，确认那台机器已开机且 OLLAMA_BASE_URL 地址可访问；"
+            "④ 若用 custom/deepseek，确认网关地址正确、网络可达。"
+            f"（原始错误：{msg}）"
+        )
+    if "401" in msg or "unauthor" in low or "api key" in low or "invalid_api_key" in low:
+        return f"大模型密钥无效或未授权，请检查 .env 中对应后端的 API Key。（原始错误：{msg}）"
+    if "404" in msg or "not found" in low:
+        return f"模型名称不存在或接口地址有误，请检查 .env 中的 MODEL 与 BASE_URL。（原始错误：{msg}）"
+    if "insufficient" in low or "quota" in low or "balance" in low:
+        return f"大模型账户额度不足或欠费，请充值后重试。（原始错误：{msg}）"
+    return f"生成作业失败：{msg}"
     return {
         "ok": True,
         "title": draft["title"],

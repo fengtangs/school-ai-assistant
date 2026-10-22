@@ -11,6 +11,7 @@ import os
 import time
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -108,7 +109,7 @@ class GenerateReq(BaseModel):
     teacher_id: str
     task: str
     params: dict = {}
-    model: str = None  # 可选：临时指定模型
+    model: Optional[str] = None  # Pydantic v2 下须显式 Optional，否则前端传 null 报 422
 
 
 def _preview_from_spec(spec: dict, task: dict) -> str:

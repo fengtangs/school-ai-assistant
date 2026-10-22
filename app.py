@@ -5,6 +5,7 @@
 """
 import os
 import json
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -58,8 +59,9 @@ _embedding_provider_name = _embedding_provider_label()
 
 class Query(BaseModel):
     question: str
-    agent: str = None  # 智能体 id，留空则用默认
-    model: str = None  # 可选：临时指定模型，留空则用 .env 里的默认模型
+    # 注意：Pydantic v2 下必须显式 Optional，否则前端传 null 会被判为 422
+    agent: Optional[str] = None   # 智能体 id，留空则用默认
+    model: Optional[str] = None   # 可选：临时指定模型，留空则用 .env 里的默认模型
 
 
 @app.get("/")
