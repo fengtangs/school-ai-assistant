@@ -13,7 +13,7 @@ def _get_int(name: str, default: int) -> int:
 
 
 class Config:
-    # 大模型后端：ollama（默认，本地/局域网部署）或 deepseek（官方 API）
+    # 大模型后端：ollama（本地）/ deepseek（官方 API）/ custom（自定义 OpenAI 兼容网关）
     llm_provider: str = os.getenv("LLM_PROVIDER", "ollama")
     llm_max_tokens: int = _get_int("LLM_MAX_TOKENS", 2048)
 
@@ -25,6 +25,12 @@ class Config:
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+
+    # 自定义 OpenAI 兼容网关（仅当 LLM_PROVIDER=custom 时使用）
+    # 默认对接「山东省综合金融服务平台智算服务专区」
+    custom_api_key: str = os.getenv("CUSTOM_API_KEY", "")
+    custom_base_url: str = os.getenv("CUSTOM_BASE_URL", "https://www.tokensd.com.cn/v1")
+    custom_model: str = os.getenv("CUSTOM_MODEL", "deepseek-v4-flash")
 
     # 嵌入
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "mock")

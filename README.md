@@ -1,4 +1,4 @@
-# 校园AI问答助手（基于 DeepSeek + RAG，多智能体）
+# 校园AI问答助手（基于 RAG，多智能体）
 
 为学校、学院、企业部门打造的 AI 问答助手 **阶段一 MVP**：基于自有文档的检索增强问答（RAG）。
 问答全部基于你放入知识库的资料，**不编造答案**。已内置多个可切换的智能体，并做成
@@ -96,11 +96,32 @@ pip install -r requirements.txt
 ```
 
 ### 2. 配置
-复制 `.env.example` 为 `.env`，填写 DeepSeek API Key：
+复制 `.env.example` 为 `.env`：
 ```
-cp .env.example .env
+cp .env.example .env      # Windows: copy .env.example .env
 ```
-在 [DeepSeek 开放平台](https://platform.deepseek.com) 创建 API Key，填入 `DEEPSEEK_API_KEY`。
+
+#### 大模型后端（三选一，改 `LLM_PROVIDER` 切换）
+
+| `LLM_PROVIDER` | 说明 | 需填写的变量 |
+|---|---|---|
+| `custom` | **推荐**，自定义 OpenAI 兼容网关 | `CUSTOM_API_KEY` / `CUSTOM_BASE_URL` / `CUSTOM_MODEL` |
+| `ollama` | 本地/局域网 Ollama，免密钥、数据不出校 | `OLLAMA_BASE_URL` / `OLLAMA_MODEL` |
+| `deepseek` | DeepSeek 官方 API | `DEEPSEEK_API_KEY` |
+
+当前默认对接**山东省综合金融服务平台智算服务专区**：
+```
+LLM_PROVIDER=custom
+CUSTOM_BASE_URL=https://www.tokensd.com.cn/v1
+CUSTOM_MODEL=deepseek-v4-flash
+CUSTOM_API_KEY=sk-...            # 在该平台申请
+```
+> ⚠️ 该网关提供 50+ 模型（deepseek-v4-flash/pro、glm-5.3、kimi-k2.7、qwen3.7-max 等），
+> 查看全部：`python -c "from core.llm import list_custom_models; print(list_custom_models())"`
+>
+> ⚠️ **`LLM_MAX_TOKENS` 建议 ≥ 4096**：`deepseek-v4-*` 等思考型模型会先消耗
+> reasoning token，值太小会出现「思考完了但正式回答为空」。
+
 > 不填 Key 也能运行（演示模式），但回答仅展示检索片段。
 
 ### 3. 放入知识文档
@@ -142,7 +163,7 @@ EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 `agentkit` 是一个与具体业务解耦的包，复制即可用：
 1. 把 `agentkit/` 和 `core/`（引擎）两个目录一起复制到目标 Python 项目；
 2. 准备你的知识库目录（放 .md/.txt/.pdf），在 `agentkit/agents.json` 里登记一个或多个智能体；
-3. 配置环境变量（`.env`：`DEEPSEEK_API_KEY` 等，参见 `.env.example`）；
+3. 配置环境变量（`.env`：`LLM_PROVIDER` + 对应后端的 `CUSTOM_*` / `OLLAMA_*` / `DEEPSEEK_*`，参见 `.env.example`）；
 4. 在代码里调用：
 ```python
 from agentkit import build_all, get_agent

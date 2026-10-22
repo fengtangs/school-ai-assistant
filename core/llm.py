@@ -1,13 +1,17 @@
 """大模型调用（OpenAI 兼容接口）。
 
-支持两种后端，通过环境变量 LLM_PROVIDER 切换（默认 ollama）：
+支持三种后端，通过环境变量 LLM_PROVIDER 切换（默认 ollama）：
 
   - ollama  ：调用本地/局域网 Ollama 的 OpenAI 兼容接口（无需 API Key）
               默认地址 http://192.168.1.103:11434/v1，默认模型 deepseek-r1:14b
   - deepseek：调用 DeepSeek 官方 API（https://api.deepseek.com），需 DEEPSEEK_API_KEY
+  - custom  ：调用任意 OpenAI 兼容的第三方网关，需 CUSTOM_API_KEY
+              默认对接「山东省综合金融服务平台智算服务专区」
+              （https://www.tokensd.com.cn/v1），默认模型 deepseek-v4-flash
 
-DeepSeek 官方接口与 Ollama 的 OpenAI 兼容接口协议一致，
-因此这里统一用同一个封装，仅 base_url 与密钥不同。
+三者协议一致（都是 OpenAI Chat Completions），因此统一用一个封装，
+仅 base_url 与密钥不同。custom 后端不写死任何厂商信息，
+只要对方兼容 OpenAI 协议，改 CUSTOM_BASE_URL / CUSTOM_MODEL 即可复用。
 """
 import os
 import json
@@ -54,13 +58,31 @@ class _OpenAILikeLLM:
         self.label = label
 
     def generate(self, system_prompt: str, context: str, question: str) -> str:
+        max_tokens = int(_env("LLM_MAX_TOKENS", "2048"))
         resp = self.client.chat.completions.create(
             model=self.model,
             messages=_build_messages(system_prompt, _build_user_content(context, question)),
             temperature=0.3,
-            max_tokens=int(_env("LLM_MAX_TOKENS", "2048")),
+            max_tokens=max_tokens,
         )
-        return resp.choices[0].message.content.strip()
+        choice = resp.choices[0]
+        content = (choice.message.content or "").strip()
+        if content:
+            return content
+
+        # —— 空回答兜底 ——
+        # 思考型模型（deepseek-r1 / deepseek-v4-* 等）会先输出 reasoning_content，
+        # 若 max_tokens 偏小，额度会被思考过程全部吃掉，导致 content 为空且
+        # finish_reason=length。这里给出可读提示，而不是让前端显示一片空白。
+        reasoning = getattr(choice.message, "reasoning_content", "") or ""
+        if choice.finish_reason == "length" and reasoning:
+            return (
+                f"（模型思考内容已达上限，正式回答被截断，未能产出结果。\n"
+                f"当前 LLM_MAX_TOKENS={max_tokens}，思考过程已占用约 "
+                f"{len(reasoning)} 字。请在 .env 中调大 LLM_MAX_TOKENS"
+                f"（建议 4096 以上）后重试。）"
+            )
+        return content
 
     def stream_generate(self, system_prompt: str, context: str, question: str):
         """流式生成：逐块 yield (kind, text) 二元组。
@@ -149,13 +171,68 @@ class OllamaLLM(_OpenAILikeLLM):
                         yield ("content", content)
 
 
+class CustomLLM(_OpenAILikeLLM):
+    """自定义 OpenAI 兼容网关后端（需 CUSTOM_API_KEY）。
+
+    默认对接「山东省综合金融服务平台智算服务专区」(tokensd.com.cn)，
+    但故意不写死厂商逻辑：只要求对方兼容 OpenAI 的 /chat/completions，
+    换 base_url + model 就能迁到别的网关（阿里百炼 / 硅基流动 / 火山方舟 等）。
+
+    该网关的思考型模型（如 deepseek-v4-flash）会在响应里额外返回
+    reasoning_content 字段，已由基类 stream_generate 识别并作为
+    "thinking" 事件流式输出，前端可实时显示思考过程。
+    """
+
+    def __init__(self, api_key: str, base_url: str, model: str):
+        if not api_key:
+            raise ValueError("缺少 CUSTOM_API_KEY")
+        super().__init__(base_url=base_url, api_key=api_key, model=model, label="custom")
+
+    def list_models(self) -> list:
+        """拉取该网关支持的模型 id 列表（用于调试 / 换模型）。"""
+        try:
+            resp = self.client.models.list()
+            return [m.id for m in resp.data]
+        except Exception:  # noqa: BLE001  部分网关未实现 /models
+            return []
+
+
+def list_custom_models() -> list:
+    """独立函数：不实例化智能体也能查自定义网关的可用模型。
+
+    用法：python -c "from core.llm import list_custom_models; print(list_custom_models())"
+    """
+    api_key = _env("CUSTOM_API_KEY", "")
+    if not api_key:
+        return []
+    try:
+        llm = CustomLLM(
+            api_key,
+            _env("CUSTOM_BASE_URL", "https://www.tokensd.com.cn/v1"),
+            _env("CUSTOM_MODEL", "deepseek-v4-flash"),
+        )
+        return llm.list_models()
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def get_llm():
     """按 LLM_PROVIDER 返回对应 LLM 实例；未配置可用后端则返回 None。
 
     默认使用 Ollama 本地模型。设置 LLM_PROVIDER=deepseek 时回退到官方 API
     （需同时提供 DEEPSEEK_API_KEY，否则同样返回 None）。
+    LLM_PROVIDER=custom 时使用自定义 OpenAI 兼容网关（需 CUSTOM_API_KEY）。
     """
     provider = _env("LLM_PROVIDER", "ollama").lower()
+    if provider in ("custom", "tokensd"):
+        api_key = _env("CUSTOM_API_KEY", "")
+        if not api_key:
+            return None
+        return CustomLLM(
+            api_key,
+            _env("CUSTOM_BASE_URL", "https://www.tokensd.com.cn/v1"),
+            _env("CUSTOM_MODEL", "deepseek-v4-flash"),
+        )
     if provider == "deepseek":
         api_key = _env("DEEPSEEK_API_KEY", "")
         if not api_key:
