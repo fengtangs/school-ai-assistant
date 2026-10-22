@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>校园AI问答助手（多智能体）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f1efe8; color: #2c2c2a; height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  header {
+    background: #185fa5; color: #fff; padding: 14px 20px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  header h1 { font-size: 16px; font-weight: 500; }
+  header .sub { font-size: 12px; opacity: .85; margin-top: 2px; }
+  .head-right { display: flex; align-items: center; gap: 14px; }
+  .agent-pick { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .agent-pick select {
+    font-size: 13px; padding: 4px 8px; border-radius: 8px; border: none;
+    background: #fff; color: #185fa5; cursor: pointer; max-width: 220px;
+  }
+  .status { font-size: 12px; display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: #5dcaa5; }
+  .dot.warn { background: #ef9f27; }
+  .wrap { flex: 1; display: flex; flex-direction: column; max-width: 820px; margin: 0 auto; width: 100%; padding: 16px; }
+  #messages { flex: 1; overflow-y: auto; padding: 8px; }
+  .msg { margin: 10px 0; max-width: 88%; }
+  .msg.user { margin-left: auto; }
+  .msg .bubble {
+    padding: 10px 14px; border-radius: 12px; line-height: 1.6; font-size: 14px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.bot .bubble { background: #fff; border: .5px solid #d3d1c7; border-top-left-radius: 4px; }
+  .msg.user .bubble { background: #185fa5; color: #fff; border-top-right-radius: 4px; }
+  .src { font-size: 12px; color: #888780; margin-top: 4px; }
+  /* 思考过程折叠块 */
+  .think {
+    background: #faf8f2; border: .5px solid #e3e0d4; border-radius: 10px;
+    margin-bottom: 8px; padding: 6px 10px;
+  }
+  .think summary {
+    cursor: pointer; font-size: 12px; color: #185fa5; user-select: none;
+    list-style: none; outline: none;
+  }
+  .think summary::-webkit-details-marker { display: none; }
+  .think summary::before { content: "▸ "; }
+  .think[open] summary::before { content: "▾ "; }
+  .think-body {
+    margin-top: 6px; line-height: 1.55; font-size: 12.5px; color: #7a776c;
+    font-style: italic; max-height: 260px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .think .think-done { font-style: normal; color: #9a978c; }
+  .inputbar { display: flex; gap: 8px; padding: 10px; background: #fff; border: .5px solid #d3d1c7; border-radius: 12px; }
+  .inputbar textarea {
+    flex: 1; border: none; resize: none; outline: none; font-size: 14px;
+    font-family: inherit; max-height: 120px; line-height: 1.5;
+  }
+  .inputbar button {
+    border: .5px solid #185fa5; background: #185fa5; color: #fff;
+    border-radius: 8px; padding: 0 18px; font-size: 14px; cursor: pointer;
+  }
+  .inputbar button:disabled { opacity: .5; cursor: default; }
+  .toolbar { padding: 6px 8px; font-size: 12px; color: #888780; display: flex; gap: 14px; }
+  .toolbar a, .toolbar button { color: #185fa5; cursor: pointer; background: none; border: none; font-size: 12px; }
+  .toolbar button:disabled { color: #b9b6aa; cursor: default; text-decoration: line-through; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>校园AI问答助手</h1>
+    <div class="sub">本地大模型驱动 · 多智能体 RAG</div>
+  </div>
+  <div class="head-right">
+    <div class="agent-pick">
+      <span>智能体</span>
+      <select id="agentSel"></select>
+    </div>
+    <div class="status" id="status"><span class="dot warn"></span><span>连接中…</span></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="toolbar">
+    <a href="/docs" target="_blank">API 文档</a>
+    <button id="rebuild">重建当前智能体知识库</button>
+  </div>
+  <div id="messages"></div>
+  <div class="inputbar">
+    <textarea id="input" rows="1" placeholder="输入你的问题…"></textarea>
+    <button id="send">发送</button>
+  </div>
+</div>
+
+<script>
+const messages = document.getElementById('messages');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const statusEl = document.getElementById('status');
+const agentSel = document.getElementById('agentSel');
+
+let agents = [];
+let currentAgent = null;
+
+function addMsg(role, text, sources) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  if (sources && sources.length) {
+    const src = document.createElement('div');
+    src.className = 'src';
+    src.textContent = '参考来源：' + sources.join('、');
+    wrap.appendChild(src);
+  }
+  messages.appendChild(wrap);
+  messages.scrollTop = messages.scrollHeight;
+  return wrap;
+}
+
+async function loadAgents() {
+  try {
+    const r = await fetch('/api/agents');
+    const d = await r.json();
+    agents = d.agents || [];
+    currentAgent = d.default || (agents[0] && agents[0].id);
+    agentSel.innerHTML = '';
+    agents.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = (a.icon || '🤖') + ' ' + a.name;
+      if (a.id === currentAgent) opt.selected = true;
+      agentSel.appendChild(opt);
+    });
+    input.placeholder = '向「' + (agents.find(a => a.id === currentAgent) || {}).name + '」提问…';
+  } catch (e) {
+    agents = [];
+  }
+}
+
+async function checkHealth() {
+  try {
+    const r = await fetch('/api/health');
+    const d = await r.json();
+    const me = (d.agents || []).find(a => a.id === currentAgent) || {};
+    const chunks = me.indexed_chunks != null ? me.indexed_chunks : (d.indexed_chunks || 0);
+    const ready = me.llm_ready != null ? me.llm_ready : d.llm_ready;
+    const name = (agents.find(a => a.id === currentAgent) || {}).name || '助手';
+    if (ready) {
+      statusEl.innerHTML = '<span class="dot ok"></span><span>' + name + ' · 已连接本地大模型 · 索引 ' + chunks + ' 条</span>';
+    } else {
+      statusEl.innerHTML = '<span class="dot warn"></span><span>' + name + ' · 大模型未就绪 · 索引 ' + chunks + ' 条</span>';
+    }
+    // 无 RAG 的智能体（如“原始 DeepSeek”）没有知识库，禁用重建按钮
+    const rebuildBtn = document.getElementById('rebuild');
+    if (rebuildBtn) rebuildBtn.disabled = (me.rag === false);
+  } catch (e) {
+    statusEl.innerHTML = '<span class="dot warn"></span><span>服务未启动</span>';
+  }
+}
+
+async function send() {
+  const q = input.value.trim();
+  if (!q) return;
+  addMsg('user', q);
+  input.value = '';
+  sendBtn.disabled = true;
+
+  // 流式消息占位（先显示思考中，待首个 delta 覆盖）
+  const { bubble, src, thinkBox, thinkBody, thinkSummary } = addStreamMsg('思考中…');
+  let full = '';
+  let sources = [];
+
+  function handleEvent(d) {
+    if (d.type === 'meta') {
+      sources = d.sources || [];
+      if (sources.length) src.textContent = '参考来源：' + sources.join('、');
+    } else if (d.type === 'thinking') {
+      // 首个思考 token 到达：把占位文案从“思考中…”切到思考块
+      thinkBody.textContent += d.text;
+      messages.scrollTop = messages.scrollHeight;
+    } else if (d.type === 'delta') {
+      full += d.text;
+      bubble.textContent = full;
+      messages.scrollTop = messages.scrollHeight;
+    } else if (d.type === 'done') {
+      full = d.answer;
+      bubble.textContent = full;
+      messages.scrollTop = messages.scrollHeight;
+      // 思考过程为空（如非推理模型/问题未触发思考）则隐藏整块
+      if (!thinkBody.textContent.trim()) {
+        thinkBox.style.display = 'none';
+      } else {
+        thinkSummary.textContent = '💭 模型思考过程';
+      }
+    } else if (d.type === 'error') {
+      bubble.textContent = '出错了：' + d.message;
+    }
+  }
+
+  try {
+    const r = await fetch('/api/chat?stream=true', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ question: q, agent: currentAgent })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // 按 SSE 事件边界（空行）切分
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        raw.split('\n').forEach(line => {
+          if (!line.startsWith('data:')) return;
+          const payload = line.slice(5).trim();
+          if (!payload) return;
+          try { handleEvent(JSON.parse(payload)); } catch (e) {}
+        });
+      }
+    }
+    // 处理末尾残留（无结束空行时）
+    buf.split('\n').forEach(line => {
+      if (!line.startsWith('data:')) return;
+      const payload = line.slice(5).trim();
+      if (!payload) return;
+      try { handleEvent(JSON.parse(payload)); } catch (e) {}
+    });
+  } catch (e) {
+    if (!full) bubble.textContent = '请求失败：' + e.message;
+  } finally {
+    sendBtn.disabled = false;
+    checkHealth();
+  }
+}
+
+function addStreamMsg(text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg bot';
+
+  // 思考过程（可折叠，随 thinking 事件实时追加）
+  const thinkBox = document.createElement('details');
+  thinkBox.className = 'think';
+  thinkBox.open = true;
+  const thinkSummary = document.createElement('summary');
+  thinkSummary.textContent = '💭 模型思考过程（实时）';
+  const thinkBody = document.createElement('div');
+  thinkBody.className = 'think-body';
+  thinkBox.appendChild(thinkSummary);
+  thinkBox.appendChild(thinkBody);
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  const src = document.createElement('div');
+  src.className = 'src';
+
+  wrap.appendChild(thinkBox);
+  wrap.appendChild(bubble);
+  wrap.appendChild(src);
+  messages.appendChild(wrap);
+  messages.scrollTop = messages.scrollHeight;
+  return { wrap, bubble, src, thinkBox, thinkBody, thinkSummary };
+}
+
+agentSel.onchange = () => {
+  currentAgent = agentSel.value;
+  const a = agents.find(x => x.id === currentAgent);
+  input.placeholder = '向「' + (a ? a.name : '助手') + '」提问…';
+  checkHealth();
+};
+
+sendBtn.onclick = send;
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+document.getElementById('rebuild').onclick = async () => {
+  addMsg('bot', '正在重建「' + (agents.find(a => a.id === currentAgent) || {}).name + '」知识库，请稍候…');
+  const r = await fetch('/api/rebuild', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ agent: currentAgent })
+  });
+  const d = await r.json();
+  addMsg('bot', '知识库已更新，共索引 ' + (d.indexed_chunks != null ? d.indexed_chunks : JSON.stringify(d.agents)) + ' 个片段。');
+  checkHealth();
+};
+(async () => { await loadAgents(); await checkHealth(); })();
+</script>
+</body>
+</html>

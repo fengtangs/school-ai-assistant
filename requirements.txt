@@ -1,0 +1,14 @@
+# 校园AI问答助手 - 依赖清单
+# 核心（必须）
+fastapi>=0.110
+uvicorn[standard]>=0.29
+openai>=1.30
+python-dotenv>=1.0
+numpy>=1.26
+
+# 真实中文向量模型（生产环境用，可选）
+# 仅当 EMBEDDING_PROVIDER=hf 时需要
+sentence-transformers>=2.6
+
+# PDF 解析（可选，如需导入 PDF 文档）
+pypdf>=4.0
