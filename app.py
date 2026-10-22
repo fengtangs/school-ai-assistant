@@ -21,6 +21,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+#     111
 )
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "ui", "index.html")
