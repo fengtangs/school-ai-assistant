@@ -32,9 +32,15 @@ class Config:
     custom_base_url: str = os.getenv("CUSTOM_BASE_URL", "https://www.tokensd.com.cn/v1")
     custom_model: str = os.getenv("CUSTOM_MODEL", "deepseek-v4-flash")
 
-    # 嵌入
+    # 嵌入：mock（字符哈希，演示用）/ custom（OpenAI 兼容远程接口，推荐）/ hf（本地模型）
+    # ⚠️ 切换 provider 会改变向量维度，必须重建索引
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "mock")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
+    # custom embedding（复用 CUSTOM_API_KEY / CUSTOM_BASE_URL）
+    custom_embedding_model: str = os.getenv(
+        "CUSTOM_EMBEDDING_MODEL", "lucion-qwen3-embedding-8b"
+    )
+    embedding_batch_size: int = _get_int("EMBEDDING_BATCH_SIZE", 32)
 
     # 学校
     school_name: str = os.getenv("SCHOOL_NAME", "德州工程职业学院")

@@ -6,7 +6,8 @@
 复用方式（复制到别的 Python 项目）：
   1) 把本目录 `agentkit/` 以及 `core/`（引擎：embeddings/vector_store/document_loader/llm）一起复制过去；
   2) 准备你的知识库目录（放 .md/.txt/.pdf），并在 agents.json 里登记；
-  3) 配置环境变量（LLM_PROVIDER / OLLAMA_* / DEEPSEEK_* 等，参见 .env.example）；
+  3) 配置环境变量（LLM_PROVIDER + 对应后端的 CUSTOM_* / OLLAMA_* / DEEPSEEK_*，
+     以及 EMBEDDING_PROVIDER 等，参见 .env.example）；
   4) from agentkit import get_agent; a = get_agent("你的agent_id"); print(a.ask("问题"))
 
 本类只依赖 core 引擎与标准库，不直接依赖项目专属的 config.py，方便移植。
@@ -170,17 +171,22 @@ class Agent:
             yield {"type": "done", "answer": text}
 
     def _fallback(self, question: str, retrieved) -> str:
+        hint = (
+            "请在 .env 中配置大模型后端（三选一）：\n"
+            "  · LLM_PROVIDER=custom   并填 CUSTOM_API_KEY（推荐，OpenAI 兼容网关）\n"
+            "  · LLM_PROVIDER=ollama   并确认 Ollama 服务可达（默认 http://192.168.1.103:11434）\n"
+            "  · LLM_PROVIDER=deepseek 并填 DEEPSEEK_API_KEY\n"
+            "详见 .env.example。"
+        )
         if not retrieved:
             return (
-                "（尚未配置可用的本地大模型（LLM），无法生成智能回答，且知识库为空。\n"
-                "请在 .env 中设置 LLM_PROVIDER=ollama 并确认 Ollama 服务可达"
-                "（默认 http://192.168.1.103:11434），并在知识库目录放入文档后重建索引。）"
+                "（尚未配置可用的大模型（LLM），无法生成智能回答，且知识库为空。\n"
+                f"{hint}）"
             )
         snippets = "\n".join(f"· {t[:180]}…" for t, _ in retrieved)
         return (
-            "（尚未配置可用的本地大模型（LLM），无法生成智能回答，"
-            "仅展示检索到的相关资料。请在 .env 中设置 LLM_PROVIDER=ollama"
-            " 并确认 Ollama 服务可达以启用真实问答。）\n\n"
+            "（尚未配置可用的大模型（LLM），无法生成智能回答，"
+            f"仅展示检索到的相关资料。\n{hint}）\n\n"
             f"你的问题：{question}\n\n相关资料片段：\n{snippets}"
         )
 

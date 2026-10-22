@@ -5,6 +5,9 @@
 __pycache__/
 *.pyc
 data/processed/
+# 索引备份/临时目录（如 data/processed.bak_mock）
+data/processed*/
+data/*.bak*/
 
 # 虚拟环境
 venv/

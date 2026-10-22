@@ -57,7 +57,7 @@ git push origin dev_你的名字          # 推到自己的分支
 - 基于 DeepSeek 大模型生成自然语言回答
 - 基于自有知识库的语义检索（RAG），回答有据可查、缺失即如实说明
 - 自带网页聊天界面，支持**智能体切换**下拉
-- 支持 .md / .txt / .pdf；中文向量检索（mock 零下载 / hf 真实模型两模式）
+- 支持 .md / .txt / .pdf；中文语义向量检索（custom 远程接口 / hf 本地模型 / mock 演示三模式）
 - 开箱即用：未配置 API Key 也能跑通检索流程（仅不生成智能回答）
 
 ## 目录结构
@@ -71,8 +71,8 @@ school-ai-assistant/
 │   ├── agents.json         # 智能体登记（id/名称/目录/提示词）
 │   └── __init__.py
 ├── core/                   # 底层引擎（被 agentkit 复用）
-│   ├── embeddings.py       # 向量化（mock / hf）
-│   ├── vector_store.py     # 轻量持久化向量库（索引按 agent 隔离）
+│   ├── embeddings.py       # 向量化（custom 远程 / hf 本地 / mock 演示）
+│   ├── vector_store.py     # 轻量持久化向量库（按 agent 隔离 + 维度校验）
 │   ├── document_loader.py  # 文档加载与切分
 │   └── llm.py              # DeepSeek 调用
 ├── ui/index.html           # 聊天界面（含智能体切换）
@@ -145,13 +145,32 @@ uvicorn app:app --host 0.0.0.0 --port 10086
 浏览器打开 http://localhost:10086 即可对话（右上角切换智能体）。
 API 文档：http://localhost:10086/docs
 
-## 切换到真实中文向量模型（推荐生产）
-默认 `EMBEDDING_PROVIDER=mock` 使用无需下载的轻量向量，适合演示。生产建议改真实模型以获得更准的语义检索：
+## 向量嵌入（决定检索准不准）
+
+检索质量几乎完全取决于这一步。三种模式：
+
+| `EMBEDDING_PROVIDER` | 维度 | 说明 |
+|---|---|---|
+| `custom` | 4096 | **推荐**，走远程 `/v1/embeddings`，语义检索准确（复用 `CUSTOM_API_KEY`） |
+| `hf` | 512 | 本地 `sentence-transformers`，需下载 ~130MB 权重，离线可用 |
+| `mock` | 512 | 字符 n-gram 哈希，**不是语义检索**，只是字面重合度，仅适合演示 |
+
+```bash
+# 推荐配置
+EMBEDDING_PROVIDER=custom
+CUSTOM_EMBEDDING_MODEL=lucion-qwen3-embedding-8b   # 4096 维
 ```
-EMBEDDING_PROVIDER=hf
-EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
-```
-首次运行自动下载权重（约 130MB），之后重新运行 `python scripts/build_index.py` 即可。
+
+> ⚠️ **切换 provider 后必须重建索引**，因为向量维度会变（mock 512 → custom 4096）。
+> 忘了重建会抛出 `StaleIndexError` 并提示你执行重建命令，不会静默给出错误结果。
+>
+> ```bash
+> python scripts/build_index.py
+> ```
+>
+> 实测对比（同一问题「华为HCIA-Datacom考试重点」）：
+> `mock` 完全召回不到考点手册 → 模型只能回答"参考信息中没有"；
+> `custom` 精准命中该手册（相似度 0.72 vs 次名 0.55）→ 完整答出 6 大考点及分值。
 
 ## 接口说明
 - `GET  /api/agents`   列出所有智能体（id/名称/图标）与默认智能体

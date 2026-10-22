@@ -6,8 +6,9 @@ openai>=1.30
 python-dotenv>=1.0
 numpy>=1.26
 
-# 真实中文向量模型（生产环境用，可选）
-# 仅当 EMBEDDING_PROVIDER=hf 时需要
+# 真实中文向量模型（本地推理，可选、体积较大 ~130MB）
+# 仅当 EMBEDDING_PROVIDER=hf 时需要；
+# 用 EMBEDDING_PROVIDER=custom（远程 embedding 接口，推荐）则无需安装本项
 sentence-transformers>=2.6
 
 # PDF 解析（可选，如需导入 PDF 文档）

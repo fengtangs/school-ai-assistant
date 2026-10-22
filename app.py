@@ -24,10 +24,25 @@ app.add_middleware(
 )
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "ui", "index.html")
-_embedding_provider_name = get_embedding_provider(
-    os.getenv("EMBEDDING_PROVIDER", "mock"),
-    os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"),
-).__class__.__name__
+
+
+def _embedding_provider_label() -> str:
+    """探测当前 embedding 实现名（仅供 /api/health 展示）。
+
+    这里必须容错：若用户把 EMBEDDING_PROVIDER 配成 custom 却没填 CUSTOM_API_KEY，
+    构造实例会抛异常。不能因此让整个服务起不来，降级为错误标记即可。
+    """
+    try:
+        prov = get_embedding_provider(
+            os.getenv("EMBEDDING_PROVIDER", "mock"),
+            os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5"),
+        )
+        return prov.__class__.__name__
+    except Exception as e:  # noqa: BLE001
+        return f"error: {e}"
+
+
+_embedding_provider_name = _embedding_provider_label()
 
 
 class Query(BaseModel):
