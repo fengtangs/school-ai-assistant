@@ -190,11 +190,6 @@ def design(req: DesignReq):
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=_explain_design_error(e))
-
-
-def _explain_design_error(e: Exception) -> str:
-    """把底层异常翻译成教师能看懂、能自助排查的中文提示。"""
-    return explain_llm_error(e)
     return {
         "ok": True,
         "title": draft["title"],
@@ -203,6 +198,11 @@ def _explain_design_error(e: Exception) -> str:
         "total_score": draft["total_score"],
         "questions": draft["questions"],
     }
+
+
+def _explain_design_error(e: Exception) -> str:
+    """把底层异常翻译成教师能看懂、能自助排查的中文提示。"""
+    return explain_llm_error(e)
 
 
 @router.post("/api/homework/save")
