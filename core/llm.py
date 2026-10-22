@@ -158,6 +158,39 @@ class _OpenAILikeLLM:
         self.model = model
         self.label = label
 
+    def chat(self, messages: list, model: str = None, json_mode: bool = False,
+             temperature: float = 0.3, max_tokens: int = None) -> str:
+        """通用对话调用：直接传完整 messages，供“生成结构化材料”这类场景使用。
+
+        与 generate() 的区别：generate() 是 RAG 专用（system + 检索上下文 + 问题），
+        本方法不掺任何模板，调用方自己组织 messages。
+
+        json_mode=True 时会请求网关按 JSON 输出；部分后端（如 Ollama 兼容层）
+        不支持该参数，此时自动去掉重试一次，保证可用性。
+        """
+        real_model = model or self.model
+        mt = max_tokens or int(_env("LLM_MAX_TOKENS", "2048"))
+        kwargs = dict(
+            model=real_model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=mt,
+        )
+        if json_mode:
+            try:
+                resp = self.client.chat.completions.create(
+                    response_format={"type": "json_object"}, **kwargs
+                )
+            except Exception:  # noqa: BLE001  后端不支持 response_format → 退回普通调用
+                resp = self.client.chat.completions.create(**kwargs)
+        else:
+            resp = self.client.chat.completions.create(**kwargs)
+
+        choice = resp.choices[0]
+        raw = choice.message.content or ""
+        _, content = split_think(raw)
+        return content or raw
+
     def generate(self, system_prompt: str, context: str, question: str, model: str = None) -> str:
         max_tokens = int(_env("LLM_MAX_TOKENS", "2048"))
         resp = self.client.chat.completions.create(

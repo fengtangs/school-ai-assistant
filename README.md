@@ -50,6 +50,7 @@ git push origin dev_你的名字          # 推到自己的分支
 | `campus` | 校园小助手 🏫 | 学校概况、教务、学生管理、奖助学金、校园生活 |
 | `huajiyun` | 华小智（华技云ICT） 🤖 | 华技云华为ICT实训平台功能、华为 HCIA/HCIP/HCIE 认证与考点、项目背景 |
 | `deepseek` | 通用对话（不查知识库） 💬 | 无 RAG，直接对话；配合「模型」下拉可对比不同大模型效果 |
+| `teacher` | 教师助手 👩‍🏫 | 备课/教案/课件/学情分析，需在 [教师工作台](/teacher) 使用 |
 
 > 想加新智能体？只需在 `agentkit/agents.json` 里加一条（id / 名称 / 知识库目录 / 系统提示词），
 > 把文档放进对应目录，运行 `python scripts/build_index.py` 即可。
@@ -219,12 +220,75 @@ curl "http://localhost:10086/api/models?refresh=true"
 > 内嵌在正文的 `<think>...</think>` 标签里。代码已统一剥离并归入「思考过程」折叠块，
 > 因此换模型后 UI 表现一致，正文不会露出标签。
 
+## 👩‍🏫 教师助手（/teacher）
+
+面向教师的独立工作台：**上传自己的教学资料 → 选任务 → 直接拿到可下载的文件**。
+不是聊天，而是产出成品材料。
+
+### 四类任务
+
+| 任务 | 产出 | 说明 |
+|------|------|------|
+| 📝 备课 | `.docx` | 教材分析、学情分析、三维目标、重难点、教学过程（含时间分配）、板书、作业 |
+| 📋 教案 | `.docx` | 规范教案格式，可直接提交教学检查 |
+| 📊 课件制作 | `.pptx` | 16:9 课件，封面/目录/章节扉页/要点页/数据页自动排版 |
+| 📈 学情分析 | `.docx` | 支持**成绩表**或**文字描述**两种输入，输出学情报告与改进对策 |
+
+### 使用流程
+
+1. 浏览器打开 <http://localhost:10086/teacher>（主页面右上角也有入口）
+2. 右上角填「教师身份」（姓名拼音即可，用于隔离资料与生成记录）
+3. 上传资料：支持 `.pdf` `.md` `.txt` `.csv` `.xlsx`（单文件 ≤20MB）
+4. 选任务 → 填课程/课题等参数 → 开始生成（约 20–90 秒）
+5. 页面预览结果 → 点「下载」拿到 `.docx` / `.pptx`
+
+### 三个设计要点
+
+**① 资料按教师隔离**
+每位教师独立目录 `data/teachers/{teacher_id}/`（原始资料 + 向量索引），互不影响。
+`teacher_id` 与文件名都做了净化，防路径穿越；这两类数据已在 `.gitignore` 中，不入库。
+
+**② 先出 JSON，再渲染文件**
+不直接让模型写 Markdown 再转文件（格式容易漂移），而是要求模型输出严格 JSON，
+由 `core/docgen.py` 用 python-pptx / python-docx 渲染。版式稳定、可控。
+
+**③ 成绩统计由程序算，不靠模型心算**
+实测让大模型「读表格算平均分」会出错（20 行成绩表也能算偏）。
+因此对 `csv`/`xlsx` 会额外做两件事：把**完整表格**放进上下文，并用 Python 预先算好
+平均分 / 最高 / 最低 / 中位数 / 及格率 / 分数段人数，标注「已由程序精确计算」注入提示词，
+模型只负责解读与提建议。学号/编号类列会自动跳过统计。
+
+### 课件版式说明
+
+`core/docgen.py` 的 PPT 渲染参考了 WorkBuddy-pptx skill 的学术风设计规范：
+
+- **三区母版**：A 标题区 0–120px / B 内容区 120–660px / C 页脚区 660–720px（画布 1280×720）
+- **版式**：封面、目录、章节扉页（超大编号）、要点页（编号列表）、数据页（KPI 卡片）、结束页
+- **色彩**：学术蓝主色 `#1E4FA8` / 藏蓝 `#0E3F8C`，主色 ≤60%、辅色 ≤30%
+- **字号阶梯**：封面主标 72 / 章节编号 160 / 页标题 34 / 正文 20–26 / 页脚 14（单位 px）
+- 每页至少一个视觉锚点（超大数字或大色块），页脚统一显示课程名与页码
+
+> 模型输出 `type` 字段决定用哪种版式（`toc` / `section` / `content` / `data`），
+> 封面与结束页由程序自动生成，保证全篇风格一致。
+
 ## 接口说明
 - `GET  /api/agents`   列出所有智能体（id/名称/图标）与默认智能体
 - `GET  /api/models`   可切换模型列表（`?refresh=true` 拉取网关全部模型）
 - `POST /api/chat`      body: `{"question": "...", "agent": "huajiyun", "model": "glm-5.3"}` → 答案、来源、所用智能体、所用模型
 - `POST /api/rebuild`   body 可选 `{"agent": "huajiyun"}` 重建指定智能体，或不带 body 重建全部
 - `GET  /api/health`   服务状态、各智能体索引条数、模型就绪情况
+
+### 教师助手 API
+- `GET  /teacher`                                教师工作台页面
+- `GET  /api/teacher/tasks`                      任务类型与参数字段定义
+- `GET  /api/teacher/materials?teacher_id=xxx`   列出该教师已上传资料
+- `POST /api/teacher/upload`                     multipart：`teacher_id` + `files`（可多个）
+- `DELETE /api/teacher/materials/{filename}?teacher_id=xxx`  删除资料并重建索引
+- `POST /api/teacher/rebuild`                    body：`teacher_id`（form）重建索引
+- `POST /api/teacher/generate`                   body：`{teacher_id, task, params, model?}` → 预览 + 下载链接
+- `GET  /api/teacher/download/{teacher_id}/{file_id}`  下载生成的文件
+- `GET  /api/teacher/outputs?teacher_id=xxx`     历史生成记录
+- `DELETE /api/teacher/outputs/{file_id}?teacher_id=xxx` 删除生成记录
 
 ## ★ 把智能体复用到别的项目
 `agentkit` 是一个与具体业务解耦的包，复制即可用：

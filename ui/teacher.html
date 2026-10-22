@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>教师工作台 · 校园AI助手</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --main: #185fa5; --main-dark: #124a80; --bg: #f1efe8; --card: #fff;
+    --line: #d3d1c7; --text: #2c2c2a; --muted: #888780;
+    --ok: #5dcaa5; --warn: #ef9f27; --err: #d14343;
+  }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    font-size: 14px; line-height: 1.6;
+  }
+  header {
+    background: var(--main); color: #fff; padding: 12px 20px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap; position: sticky; top: 0; z-index: 20;
+    box-shadow: 0 1px 4px rgba(0,0,0,.12);
+  }
+  header h1 { font-size: 16px; font-weight: 500; }
+  header .sub { font-size: 12px; opacity: .85; margin-top: 1px; }
+  .head-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .tid-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .tid-wrap input {
+    font-size: 13px; padding: 5px 9px; border-radius: 8px; border: none;
+    width: 130px; color: var(--main); font-weight: 500;
+  }
+  .link-btn {
+    background: rgba(255,255,255,.16); color: #fff; border: none; border-radius: 8px;
+    padding: 6px 12px; font-size: 12px; cursor: pointer; text-decoration: none;
+    display: inline-block;
+  }
+  .link-btn:hover { background: rgba(255,255,255,.28); }
+
+  .layout {
+    display: grid; grid-template-columns: 330px 1fr; gap: 14px;
+    max-width: 1240px; margin: 0 auto; padding: 14px; align-items: start;
+  }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: .5px solid var(--line); border-radius: 12px;
+    padding: 14px; margin-bottom: 14px;
+  }
+  .card h2 {
+    font-size: 14px; font-weight: 600; margin-bottom: 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .card h2 .hint { font-size: 11px; color: var(--muted); font-weight: 400; }
+
+  /* —— 上传区 —— */
+  #drop {
+    border: 1.5px dashed var(--line); border-radius: 10px; padding: 20px 12px;
+    text-align: center; color: var(--muted); font-size: 13px; cursor: pointer;
+    transition: .15s; background: #faf8f2;
+  }
+  #drop:hover, #drop.over { border-color: var(--main); color: var(--main); background: #f0f6fc; }
+  #drop b { color: var(--main); }
+  .tip { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+  .filelist { margin-top: 10px; max-height: 260px; overflow-y: auto; }
+  .fileitem {
+    display: flex; align-items: center; gap: 8px; padding: 7px 8px;
+    border-radius: 8px; font-size: 12.5px;
+  }
+  .fileitem:hover { background: #faf8f2; }
+  .fileitem .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fileitem .sz { color: var(--muted); font-size: 11px; }
+  .fileitem .del {
+    color: var(--err); cursor: pointer; font-size: 11px; background: none;
+    border: none; padding: 2px 5px; border-radius: 5px;
+  }
+  .fileitem .del:hover { background: #fdeaea; }
+  .empty { color: var(--muted); font-size: 12.5px; text-align: center; padding: 14px 0; }
+
+  /* —— 任务卡片 —— */
+  .tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px; }
+  .task {
+    border: 1.5px solid var(--line); border-radius: 10px; padding: 11px;
+    cursor: pointer; transition: .15s; background: #fdfcf9;
+  }
+  .task:hover { border-color: #9ab8d6; }
+  .task.on { border-color: var(--main); background: #eef5fc; box-shadow: 0 0 0 2px rgba(24,95,165,.12); }
+  .task .ic { font-size: 18px; }
+  .task .nm { font-weight: 600; font-size: 13px; margin-top: 3px; }
+  .task .ds { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+
+  /* —— 表单 —— */
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  @media (max-width: 620px) { .fields { grid-template-columns: 1fr; } }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field.full { grid-column: 1 / -1; }
+  .field label { font-size: 12px; color: #55534d; font-weight: 500; }
+  .field label .req { color: var(--err); }
+  .field input, .field textarea {
+    font-family: inherit; font-size: 13px; padding: 7px 9px; border-radius: 8px;
+    border: 1px solid var(--line); background: #fff; color: var(--text); width: 100%;
+  }
+  .field input:focus, .field textarea:focus { outline: none; border-color: var(--main); }
+  .field textarea { resize: vertical; min-height: 58px; }
+
+  .actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+  .btn-primary {
+    background: var(--main); color: #fff; border: none; border-radius: 9px;
+    padding: 9px 20px; font-size: 13.5px; font-weight: 500; cursor: pointer;
+  }
+  .btn-primary:hover { background: var(--main-dark); }
+  .btn-primary:disabled { background: #b9c9d8; cursor: not-allowed; }
+  .model-mini { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .model-mini select {
+    font-size: 12px; padding: 4px 7px; border-radius: 7px;
+    border: 1px solid var(--line); background: #fff; color: var(--main);
+  }
+
+  /* —— 结果 —— */
+  #resultCard { display: none; }
+  .result-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
+  }
+  .dl-btn {
+    background: var(--ok); color: #0d3b2e; border: none; border-radius: 9px;
+    padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    text-decoration: none; display: inline-block;
+  }
+  .dl-btn:hover { filter: brightness(.95); }
+  .dl-btn.word { background: #2b579a; color: #fff; }
+  .dl-btn.ppt { background: #c55a11; color: #fff; }
+  .preview {
+    background: #faf8f2; border: .5px solid #e3e0d4; border-radius: 10px;
+    padding: 14px 16px; font-size: 13.5px; max-height: 520px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word; line-height: 1.75;
+  }
+  .preview h3 { font-size: 15px; color: var(--main); margin: 12px 0 5px; }
+  .preview .md-h1 { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+  .preview .md-h2 { font-size: 14.5px; font-weight: 600; color: var(--main); margin: 12px 0 4px; }
+  .preview .md-li { padding-left: 16px; position: relative; }
+  .preview .md-li::before { content: "•"; position: absolute; left: 3px; color: var(--main); }
+  .preview .md-note { color: var(--muted); font-size: 12.5px; padding-left: 16px; font-style: italic; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px;
+    background: #eef5fc; color: var(--main); margin-left: 6px;
+  }
+  .src-line { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+  /* —— 历史 —— */
+  .out-item {
+    display: flex; align-items: center; gap: 9px; padding: 8px; border-radius: 8px;
+    font-size: 12.5px; border-bottom: .5px solid #f0eee6;
+  }
+  .out-item:last-child { border-bottom: none; }
+  .out-item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .out-item .tm { color: var(--muted); font-size: 11px; }
+  .out-item a { color: var(--main); font-size: 12px; text-decoration: none; }
+  .out-item a:hover { text-decoration: underline; }
+
+  .spinner {
+    display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(255,255,255,.4);
+    border-top-color: #fff; border-radius: 50%; animation: sp .8s linear infinite;
+    vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .alert {
+    border-radius: 9px; padding: 10px 12px; font-size: 12.5px; margin-top: 10px;
+  }
+  .alert.err { background: #fdeaea; color: #8c2b2b; border: .5px solid #f0c9c9; }
+  .alert.warn { background: #fdf6e7; color: #7a5510; border: .5px solid #f0e0bc; }
+  .alert.ok { background: #e9f8f2; color: #0d5c43; border: .5px solid #bde7d8; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>👩‍🏫 教师工作台</h1>
+    <div class="sub">上传资料 · 生成备课 / 教案 / 课件 / 学情分析</div>
+  </div>
+  <div class="head-right">
+    <div class="tid-wrap">
+      <span>教师身份</span>
+      <input id="tid" placeholder="如 nsf" title="用于隔离您的资料与生成记录" />
+    </div>
+    <a class="link-btn" href="/">← 返回问答</a>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- 左栏：资料 -->
+  <div>
+    <div class="card">
+      <h2>我的资料 <span class="hint" id="statLine">未上传</span></h2>
+      <div id="drop">
+        点击或拖拽文件到此处上传<br />
+        <b>支持 PDF / Word(.docx 需转 PDF) / TXT / MD / CSV / XLSX</b>
+      </div>
+      <div class="tip">上传后自动建立索引，生成材料时只会引用你自己的资料。单文件上限 20MB。</div>
+      <input type="file" id="fileInput" multiple accept=".md,.txt,.pdf,.csv,.xlsx" style="display:none" />
+      <div class="filelist" id="fileList"><div class="empty">还没有上传资料</div></div>
+    </div>
+
+    <div class="card">
+      <h2>最近生成</h2>
+      <div id="outList"><div class="empty">暂无记录</div></div>
+    </div>
+  </div>
+
+  <!-- 右栏：生成 -->
+  <div>
+    <div class="card">
+      <h2>选择任务 <span class="hint">点击卡片切换</span></h2>
+      <div class="tasks" id="taskList"></div>
+
+      <div class="fields" id="fields"></div>
+
+      <div class="actions">
+        <button class="btn-primary" id="genBtn">开始生成</button>
+        <div class="model-mini">
+          <span>模型</span>
+          <select id="modelSel"></select>
+        </div>
+      </div>
+      <div id="msgBox"></div>
+    </div>
+
+    <div class="card" id="resultCard">
+      <div class="result-head">
+        <h2 style="margin:0">生成结果</h2>
+        <a class="dl-btn" id="dlBtn" href="#" download>下载文件</a>
+      </div>
+      <div class="preview" id="preview"></div>
+      <div class="src-line" id="srcLine"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const tidInput = $('#tid'), drop = $('#drop'), fileInput = $('#fileInput');
+const fileList = $('#fileList'), taskList = $('#taskList'), fieldsEl = $('#fields');
+const genBtn = $('#genBtn'), msgBox = $('#msgBox'), resultCard = $('#resultCard');
+const preview = $('#preview'), dlBtn = $('#dlBtn'), srcLine = $('#srcLine');
+const outList = $('#outList'), modelSel = $('#modelSel'), statLine = $('#statLine');
+
+let teacherId = localStorage.getItem('teacher_id') || '';
+let tasks = [], currentTask = null, models = [];
+const STORE_KEY = 'teacher_id';
+
+// —————— 教师身份 ——————
+tidInput.value = teacherId;
+tidInput.onchange = () => {
+  teacherId = tidInput.value.trim();
+  localStorage.setItem(STORE_KEY, teacherId);
+  refreshAll();
+};
+function needTid() {
+  if (!teacherId) {
+    showMsg('warn', '请先在右上角填写「教师身份」（可用姓名拼音，如 nsf）。它用于隔离你的资料和生成记录。');
+    tidInput.focus();
+    return true;
+  }
+  return false;
+}
+
+function showMsg(kind, text) {
+  const cls = kind === 'err' ? 'err' : (kind === 'ok' ? 'ok' : 'warn');
+  msgBox.innerHTML = text ? `<div class="alert ${cls}">${escapeHtml(text)}</div>` : '';
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// —————— 任务 ——————
+async function loadTasks() {
+  const r = await fetch('/api/teacher/tasks');
+  const d = await r.json();
+  tasks = d.tasks || [];
+  taskList.innerHTML = '';
+  tasks.forEach(t => {
+    const el = document.createElement('div');
+    el.className = 'task';
+    el.dataset.id = t.id;
+    el.innerHTML = `<div class="ic">${t.icon || '📄'}</div>
+      <div class="nm">${escapeHtml(t.name)}</div>
+      <div class="ds">${escapeHtml(t.desc)}</div>`;
+    el.onclick = () => selectTask(t);
+    taskList.appendChild(el);
+  });
+  if (tasks.length) selectTask(tasks[0]);
+}
+
+function selectTask(t) {
+  currentTask = t;
+  [...taskList.children].forEach(c => c.classList.toggle('on', c.dataset.id === t.id));
+  fieldsEl.innerHTML = '';
+  (t.fields || []).forEach(f => {
+    const wrap = document.createElement('div');
+    const isWide = ['requirements', 'situation'].includes(f.key);
+    wrap.className = 'field' + (isWide ? ' full' : '');
+    const lab = document.createElement('label');
+    lab.innerHTML = escapeHtml(f.label) + (f.required ? ' <span class="req">*</span>' : '');
+    const inp = document.createElement(f.key === 'situation' || f.key === 'requirements' ? 'textarea' : 'input');
+    inp.id = 'f_' + f.key;
+    inp.placeholder = f.placeholder || '';
+    if (f.default) inp.value = f.default;
+    wrap.appendChild(lab);
+    wrap.appendChild(inp);
+    fieldsEl.appendChild(wrap);
+  });
+  msgBox.innerHTML = '';
+}
+
+// —————— 模型 ——————
+async function loadModels() {
+  try {
+    const r = await fetch('/api/models');
+    const d = await r.json();
+    modelSel.innerHTML = '<option value="">默认</option>';
+    if (d.switchable) {
+      (d.models || []).forEach(m => {
+        const o = document.createElement('option');
+        o.value = m.id; o.textContent = m.label;
+        if (m.id === d.current) o.selected = true;
+        modelSel.appendChild(o);
+      });
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+// —————— 资料 ——————
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => {
+  e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files.length) doUpload(e.dataTransfer.files);
+};
+fileInput.onchange = () => {
+  if (fileInput.files.length) doUpload(fileInput.files);
+  fileInput.value = '';
+};
+
+async function doUpload(fileObjs) {
+  if (needTid()) return;
+  const fd = new FormData();
+  fd.append('teacher_id', teacherId);
+  [...fileObjs].forEach(f => fd.append('files', f));
+  statLine.textContent = '上传中…';
+  try {
+    const r = await fetch('/api/teacher/upload', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+    const okN = (d.saved || []).length;
+    const errs = d.errors || [];
+    if (errs.length) {
+      showMsg('warn', `成功 ${okN} 个，失败 ${errs.length} 个：` +
+        errs.map(e => `${e.filename}（${e.error}）`).join('；'));
+    } else {
+      showMsg('ok', `已上传 ${okN} 个文件，索引 ${d.indexed_chunks} 个片段。`);
+    }
+    await loadMaterials();
+  } catch (e) {
+    showMsg('err', '上传失败：' + e.message);
+    statLine.textContent = '未上传';
+  }
+}
+
+async function loadMaterials() {
+  if (!teacherId) { fileList.innerHTML = '<div class="empty">还没有上传资料</div>'; statLine.textContent = '未上传'; return; }
+  try {
+    const r = await fetch('/api/teacher/materials?teacher_id=' + encodeURIComponent(teacherId));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'load fail');
+    const files = d.files || [];
+    const st = d.stats || {};
+    statLine.textContent = files.length
+      ? `${files.length} 个文件 · ${st.indexed_chunks || 0} 片段`
+      : '未上传';
+    if (!files.length) {
+      fileList.innerHTML = '<div class="empty">还没有上传资料</div>';
+      return;
+    }
+    fileList.innerHTML = '';
+    files.forEach(f => {
+      const el = document.createElement('div');
+      el.className = 'fileitem';
+      el.innerHTML = `<span>${iconOf(f.ext)}</span>
+        <span class="nm" title="${escapeHtml(f.filename)}">${escapeHtml(f.filename)}</span>
+        <span class="sz">${f.size_kb}KB</span>
+        <button class="del">删除</button>`;
+      el.querySelector('.del').onclick = () => delFile(f.filename);
+      fileList.appendChild(el);
+    });
+  } catch (e) {
+    fileList.innerHTML = '<div class="empty">读取资料失败</div>';
+  }
+}
+
+function iconOf(ext) {
+  return ({'.pdf':'📕','.md':'📝','.txt':'📄','.csv':'📊','.xlsx':'📈'})[ext] || '📄';
+}
+
+async function delFile(name) {
+  if (!confirm('确定删除「' + name + '」？删除后会重建索引。')) return;
+  const r = await fetch(`/api/teacher/materials/${encodeURIComponent(name)}?teacher_id=${encodeURIComponent(teacherId)}`,
+    { method: 'DELETE' });
+  const d = await r.json();
+  if (r.ok) showMsg('ok', `已删除，当前索引 ${d.indexed_chunks} 个片段。`);
+  else showMsg('err', d.detail || '删除失败');
+  loadMaterials();
+}
+
+// —————— 生成 ——————
+genBtn.onclick = async () => {
+  if (needTid()) return;
+  if (!currentTask) return;
+
+  const params = {};
+  let missing = null;
+  (currentTask.fields || []).forEach(f => {
+    const el = $('#f_' + f.key);
+    const v = el ? el.value.trim() : '';
+    params[f.key] = v;
+    if (f.required && !v && !missing) missing = f.label;
+  });
+  if (missing) { showMsg('warn', '请填写必填项：' + missing); return; }
+
+  genBtn.disabled = true;
+  genBtn.innerHTML = '<span class="spinner"></span>生成中（约 30–90 秒）…';
+  showMsg('warn', '正在根据你的资料生成材料，请稍候，不要关闭页面。');
+  const t0 = Date.now();
+
+  try {
+    const r = await fetch('/api/teacher/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        teacher_id: teacherId,
+        task: currentTask.id,
+        params: params,
+        model: modelSel.value || null
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+
+    if (!d.ok) {
+      // 模型没按 JSON 输出：把原文给教师，避免白等
+      showMsg('err', d.error || '生成失败');
+      preview.innerHTML = '';
+      resultCard.style.display = 'block';
+      dlBtn.style.display = 'none';
+      preview.textContent = d.raw_text || '';
+      return;
+    }
+
+    const secs = ((Date.now() - t0) / 1000).toFixed(0);
+    showMsg('ok', `生成完成，用时 ${secs} 秒，文件 ${d.size_kb}KB。`);
+    dlBtn.style.display = '';
+    dlBtn.href = d.download_url;
+    dlBtn.setAttribute('download', d.display_name || '');
+    dlBtn.textContent = '⬇ 下载 ' + (d.ext === 'pptx' ? 'PPT 课件' : '文档');
+    dlBtn.className = 'dl-btn ' + (d.ext === 'pptx' ? 'ppt' : 'word');
+    resultCard.style.display = 'block';
+    preview.innerHTML = renderPreview(d.preview || '');
+    srcLine.textContent = (d.sources && d.sources.length)
+      ? '引用资料：' + d.sources.join('、')
+      : '未检索到相关资料（内容为通用框架，请务必复核）';
+    resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    loadOutputs();
+  } catch (e) {
+    showMsg('err', '生成失败：' + e.message);
+  } finally {
+    genBtn.disabled = false;
+    genBtn.textContent = '开始生成';
+  }
+};
+
+function renderPreview(text) {
+  return text.split('\n').map(line => {
+    const t = line.trim();
+    if (!t) return '<div style="height:6px"></div>';
+    if (t.startsWith('# ')) return `<div class="md-h1">${escapeHtml(t.slice(2))}</div>`;
+    if (t.startsWith('## ')) return `<div class="md-h2">${escapeHtml(t.slice(3))}</div>`;
+    if (t.startsWith('- ')) return `<div class="md-li">${escapeHtml(t.slice(2))}</div>`;
+    if (t.startsWith('> ')) return `<div class="md-note">${escapeHtml(t.slice(2))}</div>`;
+    if (t.startsWith('*') && t.endsWith('*') && t.length > 2)
+      return `<div style="color:#888780">${escapeHtml(t.slice(1, -1))}</div>`;
+    return `<div>${escapeHtml(t)}</div>`;
+  }).join('');
+}
+
+// —————— 历史 ——————
+async function loadOutputs() {
+  if (!teacherId) { outList.innerHTML = '<div class="empty">暂无记录</div>'; return; }
+  try {
+    const r = await fetch('/api/teacher/outputs?teacher_id=' + encodeURIComponent(teacherId) + '&limit=8');
+    const d = await r.json();
+    const items = d.outputs || [];
+    if (!items.length) { outList.innerHTML = '<div class="empty">暂无记录</div>'; return; }
+    outList.innerHTML = '';
+    items.forEach(m => {
+      const el = document.createElement('div');
+      el.className = 'out-item';
+      const dt = new Date((m.created_at || 0) * 1000);
+      const hm = `${String(dt.getMonth() + 1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+      el.innerHTML = `<span>${m.ext === 'pptx' ? '📊' : '📄'}</span>
+        <span class="nm" title="${escapeHtml(m.display_name)}">${escapeHtml(m.display_name)}</span>
+        <span class="tm">${hm}</span>
+        <a href="${m.download_url}" download>下载</a>`;
+      outList.appendChild(el);
+    });
+  } catch (e) {
+    outList.innerHTML = '<div class="empty">读取记录失败</div>';
+  }
+}
+
+async function refreshAll() {
+  await loadMaterials();
+  await loadOutputs();
+}
+
+(async () => {
+  await loadTasks();
+  await loadModels();
+  await refreshAll();
+})();
+</script>
+</body>
+</html>

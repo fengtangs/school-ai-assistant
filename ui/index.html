@@ -93,6 +93,7 @@
 <div class="wrap">
   <div class="toolbar">
     <a href="/docs" target="_blank">API 文档</a>
+    <a href="/teacher" target="_blank">👩‍🏫 教师工作台</a>
     <button id="rebuild">重建当前智能体知识库</button>
   </div>
   <div id="messages"></div>
@@ -195,6 +196,14 @@ async function checkHealth() {
     const chunks = me.indexed_chunks != null ? me.indexed_chunks : (d.indexed_chunks || 0);
     const ready = me.llm_ready != null ? me.llm_ready : d.llm_ready;
     const name = (agents.find(a => a.id === currentAgent) || {}).name || '助手';
+    // 教师助手的能力在独立工作台（上传资料 + 生成文件），这里给出引导
+    if (currentAgent === 'teacher') {
+      statusEl.innerHTML = '<span class="dot ok"></span><span>教师助手 · '
+        + '<a href="/teacher" target="_blank" style="color:#fff;text-decoration:underline">打开教师工作台 →</a></span>';
+      const rebuildBtn0 = document.getElementById('rebuild');
+      if (rebuildBtn0) rebuildBtn0.disabled = true;
+      return;
+    }
     if (ready) {
       statusEl.innerHTML = '<span class="dot ok"></span><span>' + name + ' · 已连接本地大模型 · 索引 ' + chunks + ' 条</span>';
     } else {

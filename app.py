@@ -15,16 +15,20 @@ from pydantic import BaseModel
 from agentkit import list_agents, get_agent, get_default_agent_id, build_all
 from core.embeddings import get_embedding_provider
 from core.llm import RECOMMENDED_MODELS, list_custom_models
+from core.teacher_api import router as teacher_router
 
-app = FastAPI(title="校园AI问答助手（多智能体）", version="0.2.0")
+app = FastAPI(title="校园AI问答助手（多智能体）", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 教师助手（资料上传 / 材料生成 / 文件下载）
+app.include_router(teacher_router)
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "ui", "index.html")
+TEACHER_UI_PATH = os.path.join(os.path.dirname(__file__), "ui", "teacher.html")
 
 
 def _embedding_provider_label() -> str:
@@ -57,6 +61,14 @@ def index():
     if os.path.exists(UI_PATH):
         return FileResponse(UI_PATH)
     return {"message": "UI 未找到，请访问 /docs 使用接口"}
+
+
+@app.get("/teacher")
+def teacher_index():
+    """教师工作台页面（资料上传、材料生成、下载）。"""
+    if os.path.exists(TEACHER_UI_PATH):
+        return FileResponse(TEACHER_UI_PATH)
+    raise HTTPException(status_code=404, detail="教师工作台页面未找到")
 
 
 @app.get("/api/models")

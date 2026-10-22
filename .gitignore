@@ -9,6 +9,10 @@ data/processed/
 data/processed*/
 data/*.bak*/
 
+# 教师助手运行时数据（每位教师上传的资料与生成的材料，含个人信息，不入库）
+data/teachers/
+data/teacher_outputs/
+
 # 虚拟环境
 venv/
 .env/

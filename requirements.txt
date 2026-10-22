@@ -13,3 +13,9 @@ sentence-transformers>=2.6
 
 # PDF 解析（可选，如需导入 PDF 文档）
 pypdf>=4.0
+
+# 教师助手：文件上传 + 文档生成
+python-multipart>=0.0.20   # FastAPI 接收 multipart 上传（必需）
+python-pptx>=1.0           # 生成 PPT 课件
+python-docx>=1.1           # 生成教案 / 备课稿 / 学情分析报告
+openpyxl>=3.1              # 读取 Excel 成绩表
