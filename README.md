@@ -4,6 +4,39 @@
 问答全部基于你放入知识库的资料，**不编造答案**。已内置多个可切换的智能体，并做成
 **可复用的 `agentkit` 包**——同一套代码能直接搬到别的项目里用。
 
+## 团队协作
+
+仓库地址：https://github.com/fengtangs/school-ai-assistant
+
+| 分支 | 用途 |
+|------|------|
+| `main` | 稳定版本，部署到服务器 / 华技云集成的分支 |
+| `dev` | 日常开发分支（本项目当前开发主线） |
+
+### 成员首次拉取
+```bash
+git clone -b dev git@github.com:fengtangs/school-ai-assistant.git
+cd school-ai-assistant
+python -m venv venv
+# Windows:  venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env      # Windows: copy .env.example .env
+```
+
+### 日常提交流程
+```bash
+git add .
+git commit -m "feat: 新增XX功能"
+git push origin dev                 # 推到 dev 分支
+# 验证通过后，再开 PR 合并到 main
+```
+
+### 配置要求
+- `.env` **不入库**（已在 `.gitignore`），每人本地自行从 `.env.example` 复制并填写
+- `venv/`、`data/processed/`（自动生成的索引）、`.idea/` 均不入库，克隆后需本地重建索引
+- 新增依赖务必同步更新 `requirements.txt`
+
+
 ## 内置智能体
 | id | 名称 | 知识范围 |
 |----|------|----------|
