@@ -187,7 +187,11 @@ def design(req: DesignReq):
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        msg = str(e)
+        # 连接/密钥类问题给可自查的提示，内容问题则原样返回
+        if "调用大模型失败" in msg or "connection" in msg.lower():
+            raise HTTPException(status_code=503, detail=_explain_design_error(e))
+        raise HTTPException(status_code=502, detail=msg)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=_explain_design_error(e))
     return {

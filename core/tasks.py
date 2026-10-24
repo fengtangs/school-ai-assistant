@@ -57,16 +57,21 @@ _PPT_SCHEMA = (
     "slides 每一页必须是下列四种之一（type 字段必填）：\n"
     '1) 目录页  {"type":"toc","title":"目录","bullets":["01 网络基础","02 路由基础","03 交换基础"]}\n'
     '2) 章节扉页 {"type":"section","number":"01","title":"网络基础","bullets":["OSI 模型","IP 编址"]}\n'
-    '3) 要点页  {"type":"content","title":"页标题","bullets":["要点1","要点2","要点3"],"note":"演讲者备注"}\n'
+    '3) 要点页  {"type":"content","title":"页标题",'
+    '"bullets":["要点1","要点2","要点3"],"image_prompt":"配图提示词","note":"演讲者备注"}\n'
     '4) 数据页  {"type":"data","title":"页标题",'
     '"stats":[{"value":"25%","label":"路由基础"},{"value":"20%","label":"网络基础"}],'
-    '"bullets":["补充说明"],"note":""}\n'
+    '"bullets":["补充说明"],"image_prompt":"配图提示词","note":""}\n'
     "要求：\n"
     "- 第一页用 toc（目录），之后用 section 划分 2-4 个章节，每个章节下跟 1-3 页 content；"
     "遇到分值占比、统计数据、关键数字时用 data 页\n"
     "- 每页 bullets 3-5 条，每条不超过 30 字，是短语不是整段话（data 页 bullets 可为空）\n"
     "- 封面与结束页由程序自动生成，**不要**输出 cover/end 类型的页\n"
-    "- note 是讲给学生的口语化提示，30 字以内，可为空字符串"
+    "- note 是讲给学生的口语化提示，30 字以内，可为空字符串\n"
+    "- **image_prompt**：为 content / data 页写一段用于 AI 生成配图的提示词，"
+    "描述该页要配的示意图（画什么、什么风格），不要写文字说明；"
+    "风格统一为「扁平简约、白底、蓝色系、教学示意图、无文字」；"
+    "toc 与 section 页不要给 image_prompt"
 )
 
 

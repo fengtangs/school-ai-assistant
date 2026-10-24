@@ -16,6 +16,12 @@ data/teacher_outputs/
 # 作业中心运行时数据（作业内容与学生提交记录，含个人信息，不入库）
 data/homework/
 
+# 课件模板（教师上传的 .pptx 底版，体积较大且因人而异，不入库）
+data/teacher_templates/
+
+# 课件自动配图缓存（AI 生成的图片，可重新生成，不入库）
+data/ppt_images/
+
 # 虚拟环境
 venv/
 .env/

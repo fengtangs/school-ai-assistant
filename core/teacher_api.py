@@ -42,6 +42,113 @@ def _store_or_400(teacher_id: str) -> TeacherStore:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# ————————————————————————— 课件模板 —————————————————————————
+def _templates_root() -> Path:
+    return Path(os.getenv("TEACHER_TEMPLATE_DIR", "data/teacher_templates")).resolve()
+
+
+def _template_dir(teacher_id: str) -> Path:
+    d = _templates_root() / safe_teacher_id(teacher_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _template_path(teacher_id: str):
+    """返回该教师上传的模板路径；没有则返回 None。"""
+    p = _templates_root() / safe_teacher_id(teacher_id) / "template.pptx"
+    return p if p.is_file() else None
+
+
+def _inspect_template(path: Path) -> dict:
+    """读取模板的幻灯片尺寸与版式数量，供前端展示。"""
+    from pptx import Presentation
+
+    try:
+        prs = Presentation(str(path))
+        w_px = prs.slide_width / 9525
+        h_px = prs.slide_height / 9525
+        ratio = "16:9" if abs(w_px / h_px - 16 / 9) < 0.05 else (
+            "4:3" if abs(w_px / h_px - 4 / 3) < 0.05 else f"{w_px:.0f}×{h_px:.0f}"
+        )
+        return {
+            "slides": len(prs.slides),
+            "layouts": len(prs.slide_layouts),
+            "canvas": f"{w_px:.0f}×{h_px:.0f}px",
+            "ratio": ratio,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"模板解析失败：{e}"}
+
+
+@router.post("/api/teacher/template")
+async def upload_template(teacher_id: str = Form(...), file: UploadFile = File(...)):
+    """上传一份 .pptx 作为课件模板（继承其母版、主题、背景与版式）。"""
+    store = _store_or_400(teacher_id)
+    name = (file.filename or "").lower()
+    if not name.endswith(".pptx"):
+        raise HTTPException(status_code=400, detail="模板必须是 .pptx 文件（.ppt 旧格式请先另存为 .pptx）")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="模板文件为空")
+    if len(data) > 40 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="模板文件过大（上限 40MB）")
+
+    d = _template_dir(store.teacher_id)
+    target = d / "template.pptx"
+    target.write_bytes(data)
+
+    info = _inspect_template(target)
+    if info.get("error"):
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=info["error"])
+
+    meta = {
+        "filename": file.filename,
+        "size_kb": round(len(data) / 1024, 1),
+        "uploaded_at": int(time.time()),
+        **info,
+    }
+    (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "template": meta}
+
+
+@router.get("/api/teacher/template")
+def get_template(teacher_id: str):
+    """查询该教师是否已上传课件模板。"""
+    try:
+        tid = safe_teacher_id(teacher_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    p = _template_path(tid)
+    if not p:
+        return {"ok": True, "has_template": False}
+    meta_path = p.parent / "meta.json"
+    meta = {}
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            meta = {}
+    meta.setdefault("size_kb", round(p.stat().st_size / 1024, 1))
+    return {"ok": True, "has_template": True, "template": meta}
+
+
+@router.delete("/api/teacher/template")
+def delete_template(teacher_id: str):
+    """删除已上传的模板，恢复使用内置版式。"""
+    try:
+        tid = safe_teacher_id(teacher_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    p = _template_path(tid)
+    if not p:
+        return {"ok": True, "deleted": False}
+    p.unlink(missing_ok=True)
+    (p.parent / "meta.json").unlink(missing_ok=True)
+    return {"ok": True, "deleted": True}
+
+
 # ————————————————————————— 任务类型 —————————————————————————
 @router.get("/api/teacher/tasks")
 def teacher_tasks():
@@ -110,6 +217,53 @@ class GenerateReq(BaseModel):
     task: str
     params: dict = {}
     model: Optional[str] = None  # Pydantic v2 下须显式 Optional，否则前端传 null 报 422
+    use_template: bool = True    # 课件：是否套用教师上传的模板
+    with_images: bool = True     # 课件：是否为各页生成并插入配图
+
+
+def _resolve_slide_images(spec: dict, limit: int = None) -> tuple:
+    """为课件各页生成配图，返回 ({页序号: 图片路径}, 统计信息)。
+
+    · 只处理 content / data 页，且必须有 image_prompt；
+    · limit 控制成本与耗时（每张约 3-10 秒），默认取环境变量 PPT_MAX_IMAGES（缺省 6）；
+    · 任何一张失败都不影响其余页，也不影响 PPT 生成。
+    """
+    from core import images as imggen
+
+    if limit is None:
+        try:
+            limit = int(os.getenv("PPT_MAX_IMAGES", "6"))
+        except ValueError:
+            limit = 6
+
+    if not imggen.is_available():
+        return {}, {"enabled": False, "reason": "当前后端不支持配图（需 custom 网关密钥）"}
+
+    slides = spec.get("slides") if isinstance(spec.get("slides"), list) else []
+    mapping, done, failed = {}, 0, 0
+    for idx, s in enumerate(slides):
+        if not isinstance(s, dict):
+            continue
+        if str(s.get("type") or "").lower() not in ("content", "data"):
+            continue
+        prompt = str(s.get("image_prompt") or "").strip()
+        if not prompt:
+            continue
+        if done + failed >= limit:
+            break
+        path = imggen.generate_image(prompt)
+        if path:
+            mapping[idx] = path
+            done += 1
+        else:
+            failed += 1
+
+    return mapping, {
+        "enabled": True,
+        "total": done,
+        "failed": failed,
+        "model": imggen.image_model(),
+    }
 
 
 def _preview_from_spec(spec: dict, task: dict) -> str:
@@ -225,9 +379,16 @@ def generate_material(req: GenerateReq):
     out_dir = _teacher_outputs(store.teacher_id)
     out_path = out_dir / f"{file_id}.{ext}"
 
+    tpl_path = _template_path(store.teacher_id) if (ext == "pptx" and req.use_template) else None
+    img_map, img_info = {}, {}
+    if ext == "pptx" and req.with_images:
+        img_map, img_info = _resolve_slide_images(spec)
+
     try:
         if ext == "pptx":
-            build_pptx(spec, str(out_path))
+            build_pptx(spec, str(out_path),
+                       template_path=str(tpl_path) if tpl_path else None,
+                       images_map=img_map)
         else:
             build_docx(spec, str(out_path), f"{task['name']}材料")
     except Exception as e:  # noqa: BLE001
@@ -245,6 +406,8 @@ def generate_material(req: GenerateReq):
         "created_at": int(time.time()),
         "sources": sources,
         "model": req.model or getattr(llm, "model", None),
+        "template_used": bool(tpl_path),
+        "images": img_info,
     }
     (out_dir / f"{file_id}.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"

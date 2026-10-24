@@ -104,6 +104,21 @@
   .field input:focus, .field textarea:focus { outline: none; border-color: var(--main); }
   .field textarea { resize: vertical; min-height: 58px; }
 
+  /* —— 课件选项（外部模板 / 自动配图） —— */
+  .ppt-opt { border: 1px dashed var(--line); border-radius: 9px; padding: 10px 12px;
+    background: #fafbfd; }
+  .ppt-opt .row { display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+    color: var(--text); flex-wrap: wrap; }
+  .ppt-opt .row + .row { margin-top: 9px; }
+  .ppt-opt .tpl-name { color: var(--main); font-weight: 500; }
+  .ppt-opt .mini-btn { font-size: 12px; padding: 4px 10px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--line); background: #fff; color: var(--main); }
+  .ppt-opt .mini-btn:hover { border-color: var(--main); }
+  .ppt-opt .mini-btn.del { color: var(--err); }
+  .ppt-opt label.sw { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .ppt-opt input[type=checkbox] { width: 14px; height: 14px; accent-color: var(--main); }
+  .ppt-opt .note { font-size: 11.5px; color: var(--muted); margin-top: 7px; line-height: 1.55; }
+
   .actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
   .btn-primary {
     background: var(--main); color: #fff; border: none; border-radius: 9px;
@@ -312,7 +327,86 @@ function selectTask(t) {
     wrap.appendChild(inp);
     fieldsEl.appendChild(wrap);
   });
+
+  // 课件任务：追加「外部模板 + 自动配图」选项
+  if (t.output === 'pptx') {
+    const box = document.createElement('div');
+    box.className = 'field full';
+    box.innerHTML = `
+      <div class="ppt-opt">
+        <div class="row">
+          <span>课件模板</span>
+          <span class="tpl-name" id="tplName">内置版式</span>
+          <button class="mini-btn" id="tplUpBtn" type="button">上传模板</button>
+          <button class="mini-btn del" id="tplDelBtn" type="button" style="display:none">移除</button>
+          <input type="file" id="tplFile" accept=".pptx" style="display:none">
+        </div>
+        <div class="row">
+          <label class="sw"><input type="checkbox" id="withImages" checked> 自动生成配图</label>
+          <span style="color:var(--muted)">每页按内容生成示意图，约 3–10 秒/张</span>
+        </div>
+        <div class="note" id="tplHint">上传一份 .pptx 作为底版，将继承它的母版、主题配色与背景；不上传则用内置学术风版式。</div>
+      </div>`;
+    fieldsEl.appendChild(box);
+    wirePptOptions();
+  }
   msgBox.innerHTML = '';
+}
+
+// —————— 课件选项（模板 / 配图）——————
+let hasTemplate = false;
+
+async function loadTemplate() {
+  const nameEl = $('#tplName'), delBtn = $('#tplDelBtn');
+  if (!nameEl) return;
+  if (!teacherId) { nameEl.textContent = '内置版式'; delBtn.style.display = 'none'; hasTemplate = false; return; }
+  try {
+    const r = await fetch('/api/teacher/template?teacher_id=' + encodeURIComponent(teacherId));
+    const d = await r.json();
+    hasTemplate = !!d.has_template;
+    if (hasTemplate) {
+      const t = d.template || {};
+      nameEl.textContent = (t.ratio ? t.ratio + ' 模板' : '已上传模板') + (t.size_kb ? `（${t.size_kb}KB）` : '');
+      nameEl.title = t.filename || '';
+      delBtn.style.display = '';
+    } else {
+      nameEl.textContent = '内置版式';
+      nameEl.title = '';
+      delBtn.style.display = 'none';
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+function wirePptOptions() {
+  const upBtn = $('#tplUpBtn'), fileEl = $('#tplFile'), delBtn = $('#tplDelBtn');
+  if (!upBtn) return;
+  upBtn.onclick = () => { if (needTid()) return; fileEl.click(); };
+  fileEl.onchange = async () => {
+    const f = fileEl.files && fileEl.files[0];
+    fileEl.value = '';
+    if (!f) return;
+    if (!/\.pptx$/i.test(f.name)) { showMsg('err', '模板必须是 .pptx 文件（.ppt 请先另存为 .pptx）'); return; }
+    const fd = new FormData();
+    fd.append('teacher_id', teacherId);
+    fd.append('file', f);
+    showMsg('warn', '正在上传并解析模板…');
+    try {
+      const r = await fetch('/api/teacher/template', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+      await loadTemplate();
+      showMsg('ok', `模板已上传：${d.template.ratio}，${d.template.layouts} 个版式。生成课件时会自动套用。`);
+    } catch (e) { showMsg('err', '模板上传失败：' + e.message); }
+  };
+  delBtn.onclick = async () => {
+    if (!confirm('确定移除已上传的模板？之后生成课件将使用内置版式。')) return;
+    try {
+      await fetch('/api/teacher/template?teacher_id=' + encodeURIComponent(teacherId), { method: 'DELETE' });
+      await loadTemplate();
+      showMsg('ok', '模板已移除。');
+    } catch (e) { showMsg('err', '移除失败：' + e.message); }
+  };
+  loadTemplate();
 }
 
 // —————— 模型 ——————
@@ -443,7 +537,11 @@ genBtn.onclick = async () => {
         teacher_id: teacherId,
         task: currentTask.id,
         params: params,
-        model: modelSel.value || null
+        model: modelSel.value || null,
+        use_template: true,
+        with_images: (currentTask.output === 'pptx')
+          ? ($('#withImages') ? $('#withImages').checked : true)
+          : false
       })
     });
     const d = await r.json();
@@ -460,7 +558,19 @@ genBtn.onclick = async () => {
     }
 
     const secs = ((Date.now() - t0) / 1000).toFixed(0);
-    showMsg('ok', `生成完成，用时 ${secs} 秒，文件 ${d.size_kb}KB。`);
+    let extra = '';
+    if (d.ext === 'pptx') {
+      const bits = [];
+      if (d.template_used) bits.push('已套用模板');
+      if (d.images && d.images.enabled) {
+        bits.push(d.images.total ? '配图 ' + d.images.total + ' 张' : '未配图');
+        if (d.images.failed) bits.push(d.images.failed + ' 张配图失败');
+      } else if (d.images && d.images.reason) {
+        bits.push('配图未启用');
+      }
+      if (bits.length) extra = '（' + bits.join('，') + '）';
+    }
+    showMsg('ok', `生成完成，用时 ${secs} 秒，文件 ${d.size_kb}KB${extra}。`);
     dlBtn.style.display = '';
     dlBtn.href = d.download_url;
     dlBtn.setAttribute('download', d.display_name || '');
@@ -523,6 +633,7 @@ async function loadOutputs() {
 async function refreshAll() {
   await loadMaterials();
   await loadOutputs();
+  if ($('#tplName')) await loadTemplate();
 }
 
 (async () => {

@@ -301,17 +301,46 @@ def design_homework(params: dict, model: str = None, teacher_id: str = None) -> 
     )
 
     max_tokens = int(os.getenv("TEACHER_MAX_TOKENS", "8192"))
-    raw = llm.chat(
-        [
-            {"role": "system", "content": _DESIGN_SYSTEM},
-            {"role": "user", "content": user},
-        ],
-        model=model,
-        json_mode=True,
-        temperature=0.4,
-        max_tokens=max_tokens,
-    )
-    spec = parse_json_block(raw)
+    messages = [
+        {"role": "system", "content": _DESIGN_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+    # 思考型模型偶尔会「思考耗尽 token 导致正文为空」或返回非 JSON，
+    # 这里重试一次，显著降低偶发失败率（与教师材料生成保持一致）。
+    raw, last_err, spec = "", "", None
+    for attempt in range(2):
+        try:
+            raw = llm.chat(
+                messages,
+                model=model,
+                json_mode=True,
+                temperature=0.4,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:  # noqa: BLE001  网络/网关异常，重试一次
+            last_err = f"调用大模型失败：{e}"
+            continue
+        if not raw or not raw.strip():
+            last_err = (
+                f"模型返回空内容（第 {attempt + 1} 次）。通常是思考过程耗尽了 "
+                f"max_tokens={max_tokens}，可调大 TEACHER_MAX_TOKENS 或换个模型重试"
+            )
+            continue
+        try:
+            spec = parse_json_block(raw)
+        except ValueError as e:
+            last_err = f"{e}（第 {attempt + 1} 次）"
+            spec = None
+            continue
+        if isinstance(spec.get("questions"), list) and spec["questions"]:
+            break
+        last_err = f"模型未返回题目列表（第 {attempt + 1} 次）"
+        spec = None
+
+    if spec is None:
+        raise ValueError(last_err or "模型未返回有效题目")
+
     questions = spec.get("questions") or []
     if not isinstance(questions, list) or not questions:
         raise ValueError("模型未返回题目列表")
