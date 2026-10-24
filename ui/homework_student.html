@@ -84,6 +84,27 @@
   .res-ana { font-size:12.5px; color:#555; margin-top:5px; background:#faf8f2; padding:7px 10px; border-radius:8px; }
   .alert { border-radius:9px; padding:10px 12px; font-size:12.5px; margin-top:10px; }
   .alert.warn { background:#fdf6e7; color:#7a5510; border:.5px solid #f0e0bc; }
+  /* —— 切屏检测：作答页监考条 —— */
+  .monitor { display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:#f4f8fc; border:.5px solid #cfe0f0; border-radius:9px; padding:8px 12px;
+    margin-bottom:12px; font-size:12.5px; transition:background .2s,border-color .2s; }
+  .monitor.warn { background:#fdf6e7; border-color:#f0e0bc; }
+  .monitor.bad { background:#fdeaea; border-color:#f0c9c9; }
+  .mon-left { display:flex; align-items:center; gap:7px; color:#3d5a75; }
+  .monitor.warn .mon-left { color:#7a5510; }
+  .monitor.bad .mon-left { color:#8c2b2b; }
+  .mon-dot { width:7px; height:7px; border-radius:50%; background:var(--ok); flex:none; }
+  .monitor.warn .mon-dot { background:var(--warn); }
+  .monitor.bad .mon-dot { background:var(--err); animation:blink 1.2s infinite; }
+  .mon-pill { background:#fff; border:.5px solid var(--line); border-radius:20px;
+    padding:2px 10px; color:#55534d; white-space:nowrap; font-size:12px; }
+  .monitor.bad .mon-pill { color:var(--err); border-color:#f0c9c9; }
+  @keyframes blink { 50% { opacity:.35; } }
+  #toast { position:fixed; top:66px; left:50%; transform:translateX(-50%); z-index:60;
+    background:#7a5510; color:#fff; border-radius:10px; padding:10px 16px; font-size:13px;
+    box-shadow:0 8px 24px rgba(0,0,0,.22); display:none; max-width:90vw; line-height:1.5; }
+  #toast.show { display:block; }
+  #toast.err { background:#8c2b2b; }
   .spinner { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,.4);
     border-top-color:#fff; border-radius:50%; animation:sp .8s linear infinite; vertical-align:-2px; margin-right:6px; }
   @keyframes sp { to { transform:rotate(360deg); } }
@@ -125,6 +146,10 @@
   <!-- 步骤3：作答 -->
   <div class="card hidden" id="stepDo">
     <h2 id="doTitle">作答</h2>
+    <div class="monitor" id="monitor">
+      <div class="mon-left"><span class="mon-dot"></span><span id="monText">作答中 · 请勿切换到其他页面</span></div>
+      <div class="mon-pill" id="monSwitch">👁 切屏 0 次</div>
+    </div>
     <div id="doMeta" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
     <div id="doQuestions"></div>
     <div class="actions">
@@ -132,6 +157,9 @@
       <button class="btn-ghost" id="backList">← 返回作业列表</button>
     </div>
     <div id="doMsg"></div>
+    <div style="font-size:11.5px;color:#9a978c;margin-top:10px">
+      作答期间会检测是否离开本页面（切换标签页、切到其他窗口）。切屏次数将随作业一起提交给老师，用于学习过程记录。
+    </div>
   </div>
 
   <!-- 步骤4：结果 -->
@@ -144,6 +172,8 @@
   </div>
 </div>
 
+<div id="toast"></div>
+
 <script>
 const $=s=>document.querySelector(s);
 const stuName=$('#stuName'), stuClass=$('#stuClass'), subjSel=$('#subjSel');
@@ -153,6 +183,72 @@ const asgList=$('#asgList'), doQuestions=$('#doQuestions'), doTitle=$('#doTitle'
 const submitBtn=$('#submitBtn'), doMsg=$('#doMsg'), resultBox=$('#resultBox');
 
 let currentHw=null, preview=null;
+
+/* —————————————— 切屏检测 ——————————————
+ * 浏览器不允许网页知道"你打开了哪个软件"，但能感知本页是否还可见/有焦点：
+ *   visibilitychange(hidden)  → 切到别的标签页、最小化、切到其他应用
+ *   blur                     → 窗口失焦（点开别的窗口、地址栏、任务栏）
+ * 两者会同时触发，所以用 900ms 去重，避免一次切屏被记成两次。
+ * 只在"作答中"计数；离开的时间累计成 away_seconds 一并提交。
+ */
+let answering=false;      // 是否处于作答状态
+let switchCount=0;        // 切屏次数
+let awayMs=0;             // 累计离开时长（毫秒）
+let awayStart=0;          // 本次离开的起始时间戳，0 表示当前在页内
+let lastLeave=0;          // 上次判定离开的时间，用于去重
+let toastTimer=null;
+
+function toast(text, isErr){
+  const t=$('#toast');
+  if(!t) return;
+  t.textContent=text;
+  t.className='show'+(isErr?' err':'');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ t.className=''; }, 3600);
+}
+
+function paintMonitor(){
+  const box=$('#monitor'), pill=$('#monSwitch'), txt=$('#monText');
+  if(!box) return;
+  box.className='monitor'+(switchCount>=3?' bad':(switchCount>0?' warn':''));
+  pill.textContent='👁 切屏 '+switchCount+' 次';
+  txt.textContent = switchCount===0
+    ? '作答中 · 请勿切换到其他页面'
+    : (switchCount>=3 ? '已多次离开作答页，记录将同步给老师'
+                      : '离开过作答页，记录将同步给老师');
+}
+
+function resetMonitor(){
+  switchCount=0; awayMs=0; awayStart=0; lastLeave=0;
+  paintMonitor();
+}
+
+function onLeave(){
+  if(!answering) return;
+  const now=Date.now();
+  if(now-lastLeave<900){          // 同一次切屏的重复事件
+    if(!awayStart) awayStart=now;
+    return;
+  }
+  lastLeave=now; awayStart=now; switchCount++;
+  paintMonitor();
+}
+
+function onBack(){
+  if(!answering || !awayStart) return;
+  awayMs += Date.now()-awayStart;
+  awayStart=0;
+  toast(switchCount>=3
+    ? '⚠️ 第 '+switchCount+' 次切屏已被记录，将同步给老师'
+    : '检测到离开作答页，已记录第 '+switchCount+' 次切屏', switchCount>=3);
+  paintMonitor();
+}
+
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden) onLeave(); else onBack();
+});
+window.addEventListener('blur', onLeave);
+window.addEventListener('focus', onBack);
 
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function qtLabel(t){ return ({choice:'选择题',judge:'判断题',short:'简答题'})[t]||t; }
@@ -203,6 +299,8 @@ async function openDo(id){
     d.questions.forEach((q,i)=>doQuestions.appendChild(renderDoQ(q,i)));
     stepList.classList.add('hidden'); stepDo.classList.remove('hidden');
     doMsg.innerHTML='';
+    answering=true;      // 进入作答，开始检测切屏
+    resetMonitor();
   }catch(e){ alert('打开失败：'+e.message); }
 }
 
@@ -222,7 +320,7 @@ function renderDoQ(q,i){
   return el;
 }
 
-$('#backList').onclick=()=>{ stepDo.classList.add('hidden'); stepList.classList.remove('hidden'); };
+$('#backList').onclick=()=>{ answering=false; stepDo.classList.add('hidden'); stepList.classList.remove('hidden'); };
 
 submitBtn.onclick=async ()=>{
   const answers={};
@@ -233,13 +331,17 @@ submitBtn.onclick=async ()=>{
       if(!r){ unanswered++; } else { answers[i]= q.type==='choice'?parseInt(r.value):(r.value==='true'); } }
   });
   if(unanswered>0 && !confirm(`还有 ${unanswered} 题未作答，确定提交？`)) return;
+  // 切屏较多时再确认一次，让学生知道这条记录会跟着作业走
+  if(switchCount>0 && !confirm(`本次作答期间检测到 ${switchCount} 次切屏（累计离开约 ${Math.round(awayMs/1000)} 秒），该记录会随作业提交给老师。\n\n仍要提交吗？`)) return;
 
+  answering=false;     // 停止计数：提交过程中/结果页的切屏不算作答行为
   submitBtn.disabled=true; submitBtn.innerHTML='<span class="spinner"></span>提交批改中…';
   doMsg.innerHTML='';
   try{
     const r=await fetch('/api/homework/submit',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ homework_id:currentHw, student_name:stuName.value.trim(),
-        student_class:stuClass.value.trim(), answers })});
+        student_class:stuClass.value.trim(), answers,
+        switch_count:switchCount, away_seconds:Math.round(awayMs/1000) })});
     const d=await r.json(); if(!r.ok) throw new Error(d.detail||('HTTP '+r.status));
     renderResult(d);
     stepDo.classList.add('hidden'); stepResult.classList.remove('hidden');
@@ -249,10 +351,15 @@ submitBtn.onclick=async ()=>{
 
 function renderResult(d){
   const pass=d.passed;
+  const nSw=(d.switch_count!=null?d.switch_count:switchCount);
+  const swSec=(d.away_seconds!=null?d.away_seconds:Math.round(awayMs/1000));
   const big=`<div class="score-big ${pass?'pass':'fail'}">
       <div class="num">${d.score}<span style="font-size:20px"> / ${d.total}</span></div>
       <div class="lab">${pass?'🎉 恭喜，及格啦！':'未及格，继续加油～'}${d.needs_review?'（含待教师批改的简答题）':''}</div>
     </div>`;
+  const swHtml = nSw>0
+    ? `<div class="alert warn" style="margin-bottom:14px">👁 本次作答共检测到 <b>${nSw}</b> 次切屏${swSec>0?`（累计离开约 ${swSec} 秒）`:''}，该记录已随作业一并提交给老师。</div>`
+    : '';
   const items=d.detail.map((q,i)=>{
     let cls='right', tag='<span class="tag right">答对</span>';
     if(q.needs_review){ cls='review'; tag='<span class="tag review">待批改</span>'; }
@@ -277,7 +384,7 @@ function renderResult(d){
         <span style="margin-left:auto;font-size:12px;color:var(--muted)">${qtLabel(q.type)} · 得分 ${q.score}/${q.max}</span></div>
       ${ansShow}${ana}</div>`;
   }).join('');
-  resultBox.innerHTML=big+items;
+  resultBox.innerHTML=big+swHtml+items;
 }
 $('#backList2').onclick=()=>{ stepResult.classList.add('hidden'); stepList.classList.remove('hidden'); };
 

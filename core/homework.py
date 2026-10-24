@@ -506,7 +506,8 @@ def grade_submission(hw: dict, answers: dict, model: str = None) -> dict:
 # 提交记录
 # ————————————————————————————————————————————————
 def add_submission(hw_id: str, student_name: str, student_class: str,
-                  answers: dict, grading_result: dict) -> dict:
+                  answers: dict, grading_result: dict,
+                  switch_count: int = 0, away_seconds: int = 0) -> dict:
     sub = {
         "id": "sub_" + uuid.uuid4().hex[:12],
         "homework_id": hw_id,
@@ -520,6 +521,9 @@ def add_submission(hw_id: str, student_name: str, student_class: str,
         "wrong_questions": grading_result["wrong_questions"],
         "needs_review": grading_result["needs_review"],
         "grading": grading_result["grading"],
+        # 过程记录：作答期间切屏次数/离开时长（前端检测，仅作参考，不影响判分）
+        "switch_count": int(switch_count or 0),
+        "away_seconds": int(away_seconds or 0),
     }
     path = _submissions_file(hw_id)
     subs = _read_json(path, [])
@@ -591,6 +595,10 @@ def compute_analytics(hw_id: str) -> dict:
             "per_question": [],
             "wrong_ranking": [],
             "needs_review_count": 0,
+            "switch_total": 0,
+            "switch_students": 0,
+            "switch_rate": 0,
+            "switch_list": [],
         }
 
     scores = [s["score"] for s in subs]
@@ -656,6 +664,27 @@ def compute_analytics(hw_id: str) -> dict:
 
     needs_review_count = sum(1 for s in subs if s.get("needs_review"))
 
+    # 切屏统计：同一学生可能提交多次，按人取最大值，避免重复计数
+    per_student = {}
+    for s in subs:
+        key = (s.get("student_name"), s.get("student_class"))
+        sw = int(s.get("switch_count") or 0)
+        aw = int(s.get("away_seconds") or 0)
+        old = per_student.get(key)
+        if old is None or sw > old["switch_count"]:
+            per_student[key] = {
+                "student_name": s.get("student_name"),
+                "student_class": s.get("student_class") or "",
+                "switch_count": sw,
+                "away_seconds": aw,
+            }
+    switch_list = sorted(
+        [v for v in per_student.values() if v["switch_count"] > 0],
+        key=lambda x: (-x["switch_count"], -x["away_seconds"]),
+    )
+    switch_total = sum(v["switch_count"] for v in switch_list)
+    switch_students = len(switch_list)
+
     return {
         "homework_id": hw_id,
         "title": hw.get("title"),
@@ -670,4 +699,8 @@ def compute_analytics(hw_id: str) -> dict:
         "per_question": per_q,
         "wrong_ranking": wrong_ranking,
         "needs_review_count": needs_review_count,
+        "switch_total": switch_total,
+        "switch_students": switch_students,
+        "switch_rate": round(switch_students / student_count, 3) if student_count else 0,
+        "switch_list": switch_list[:20],
     }

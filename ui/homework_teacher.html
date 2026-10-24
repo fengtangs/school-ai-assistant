@@ -567,8 +567,22 @@ function renderAnalytics(a, subs){
     const dt=new Date((s.submitted_at||0)*1000);
     const hm=`${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
     const tag=s.needs_review?'<span class="badge draft">待批改</span>':(s.passed?'<span class="badge assigned">及格</span>':'<span class="badge draft">不及格</span>');
-    return `<tr><td>${escapeHtml(s.student_name)}</td><td>${escapeHtml(s.student_class||'')}</td><td>${hm}</td><td><b>${s.score}</b>/${s.total}</td><td>${tag}</td></tr>`;
-  }).join('') || '<tr><td colspan="5" class="empty">还没有学生提交</td></tr>';
+    const sw=Number(s.switch_count||0);
+    const swCell = sw===0
+      ? '<span style="color:#b9b6aa">—</span>'
+      : `<span style="color:${sw>=3?'#d14343':'#7a5510'};font-weight:${sw>=3?'600':'500'}" title="${s.away_seconds?('累计离开约 '+s.away_seconds+' 秒'):''}">${sw} 次${sw>=3?' ⚠️':''}</span>`;
+    return `<tr><td>${escapeHtml(s.student_name)}</td><td>${escapeHtml(s.student_class||'')}</td><td>${hm}</td><td><b>${s.score}</b>/${s.total}</td><td>${tag}</td><td>${swCell}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">还没有学生提交</td></tr>';
+
+  // 切屏汇总：只做提示，不下结论（切屏≠作弊，可能是查资料或误触）
+  const swList=a.switch_list||[];
+  const swAlert = swList.length
+    ? `<div class="alert warn" style="margin-top:12px">
+         👁 有 <b>${a.switch_students}</b> 名学生作答期间出现切屏（占参与者 ${Math.round((a.switch_rate||0)*100)}%，共 ${a.switch_total} 次）：<br>
+         ${swList.slice(0,8).map(s=>`${escapeHtml(s.student_name)}（${s.switch_count} 次${s.away_seconds?`，离开约 ${s.away_seconds}s`:''}）`).join('、')}${swList.length>8?' 等':''}<br>
+         <span style="color:#9a7850">切屏只是过程记录，不直接判定违规，建议结合得分与作答时长再人工确认。</span>
+       </div>`
+    : '';
 
   anaBody.innerHTML=`
     <div class="kpis">
@@ -583,7 +597,8 @@ function renderAnalytics(a, subs){
     <div class="sec-title">错题排行（按错误人数）</div>
     <table class="wtable"><thead><tr><th>题型</th><th>题目</th><th>分值</th><th>正确率</th><th>错误</th></tr></thead><tbody>${wr}</tbody></table>
     <div class="sec-title">提交记录</div>
-    <table class="wtable"><thead><tr><th>学生</th><th>班级</th><th>提交时间</th><th>得分</th><th>状态</th></tr></thead><tbody>${subHtml}</tbody></table>
+    <table class="wtable"><thead><tr><th>学生</th><th>班级</th><th>提交时间</th><th>得分</th><th>状态</th><th>切屏</th></tr></thead><tbody>${subHtml}</tbody></table>
+    ${swAlert}
     ${a.needs_review_count?`<div class="alert warn" style="margin-top:12px">有 ${a.needs_review_count} 份提交含需教师人工批改的简答题，请到学生端或提交记录中复核评分。</div>`:''}
   `;
 }

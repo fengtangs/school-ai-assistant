@@ -66,6 +66,9 @@ class SubmitReq(BaseModel):
     student_name: str
     student_class: str = ""
     answers: dict = {}     # { "0": 选项下标 / true|false / "文本" }
+    # 切屏检测（前端 visibilitychange/blur 统计，属于过程记录，不参与判分）
+    switch_count: int = 0      # 作答期间离开页面的次数
+    away_seconds: int = 0      # 累计离开时长（秒）
 
 
 class RescoreReq(BaseModel):
@@ -142,8 +145,12 @@ def submit(req: SubmitReq):
             answers[str(i)] = str(raw).strip()
 
     result = hw.grade_submission(h, answers, model=None)
+    # 切屏数据来自前端，属于不可信输入：只做范围裁剪，不参与任何判分逻辑
+    switch_count = max(0, min(int(req.switch_count or 0), 999))
+    away_seconds = max(0, min(int(req.away_seconds or 0), 86400))
     sub = hw.add_submission(
-        h["id"], student_name, req.student_class, answers, result
+        h["id"], student_name, req.student_class, answers, result,
+        switch_count=switch_count, away_seconds=away_seconds,
     )
 
     # 返回批改详情（含正确答案/解析，供学生复盘）
@@ -174,6 +181,8 @@ def submit(req: SubmitReq):
         "passed": result["passed"],
         "wrong_questions": result["wrong_questions"],
         "needs_review": result["needs_review"],
+        "switch_count": switch_count,
+        "away_seconds": away_seconds,
         "detail": detail,
     }
 
@@ -318,6 +327,8 @@ def submissions(hw_id: str):
             "total": s["total"],
             "passed": s["passed"],
             "needs_review": s.get("needs_review"),
+            "switch_count": s.get("switch_count", 0),
+            "away_seconds": s.get("away_seconds", 0),
         })
     return {"submissions": out}
 
