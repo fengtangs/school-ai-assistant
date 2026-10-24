@@ -73,10 +73,26 @@ class RebuildReq(BaseModel):
     agent: Optional[str] = None
 
 
+def _html_response(path: str):
+    """返回页面，并禁用「启发式缓存」。
+
+    FileResponse 默认不写 Cache-Control，浏览器会自己猜一个新鲜期，
+    结果就是「代码改了、刷新还是旧页面」，得手动 Ctrl+F5 才看得见。
+    这里统一加 no-cache：浏览器每次都带 ETag 来问，没变就 304，几乎不花带宽。
+    """
+    return FileResponse(
+        path,
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
+
+
 @app.get("/")
 def index():
     if os.path.exists(UI_PATH):
-        return FileResponse(UI_PATH)
+        return _html_response(UI_PATH)
     return {"message": "UI 未找到，请访问 /docs 使用接口"}
 
 
@@ -84,7 +100,7 @@ def index():
 def teacher_index():
     """教师工作台页面（资料上传、材料生成、下载）。"""
     if os.path.exists(TEACHER_UI_PATH):
-        return FileResponse(TEACHER_UI_PATH)
+        return _html_response(TEACHER_UI_PATH)
     raise HTTPException(status_code=404, detail="教师工作台页面未找到")
 
 
@@ -92,7 +108,7 @@ def teacher_index():
 def homework_teacher_index():
     """教师作业平台页面（AI 出题 / 布置 / 学情分析）。"""
     if os.path.exists(TEACHER_HW_PATH):
-        return FileResponse(TEACHER_HW_PATH)
+        return _html_response(TEACHER_HW_PATH)
     raise HTTPException(status_code=404, detail="教师作业平台页面未找到")
 
 
@@ -100,7 +116,7 @@ def homework_teacher_index():
 def homework_student_index():
     """校园小助手·学生作业页面（按科目选作业、作答、查看成绩）。"""
     if os.path.exists(STUDENT_HW_PATH):
-        return FileResponse(STUDENT_HW_PATH)
+        return _html_response(STUDENT_HW_PATH)
     raise HTTPException(status_code=404, detail="学生作业页面未找到")
 
 
