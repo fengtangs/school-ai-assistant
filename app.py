@@ -65,6 +65,14 @@ class Query(BaseModel):
     model: Optional[str] = None   # 可选：临时指定模型，留空则用 .env 里的默认模型
 
 
+class RebuildReq(BaseModel):
+    """重建索引的请求体：只有 agent 一个可选字段。
+
+    不能复用 Query —— 那样 question 是必填项，前端只传 {agent} 会直接 422。
+    """
+    agent: Optional[str] = None
+
+
 @app.get("/")
 def index():
     if os.path.exists(UI_PATH):
@@ -201,7 +209,7 @@ def chat(q: Query, stream: bool = QueryParam(False)):
 
 
 @app.post("/api/rebuild")
-def rebuild(q: Query = None):
+def rebuild(q: RebuildReq = None):
     agent_id = (q.agent if q else None) or None
     if agent_id:
         try:
@@ -210,6 +218,31 @@ def rebuild(q: Query = None):
             raise HTTPException(status_code=404, detail=f"未找到智能体: {agent_id}")
         return {"agent": agent_id, "indexed_chunks": n}
     return {"agents": build_all()}
+
+
+@app.on_event("startup")
+def _warm_up_indexes():
+    """启动时自动补齐空索引。
+
+    索引是落盘的，一旦 data/processed 被清掉或换了机器，重启后检索会一直返回空，
+    表现为「知识库里明明有这份文件，回答却说没有相关资料」。这里在启动时兜一次底，
+    只对「RAG 智能体且索引为 0」的做重建，有索引的直接跳过，不拖慢启动。
+    """
+    import time
+
+    for item in list_agents():
+        agent_id = item["id"]
+        try:
+            agent = get_agent(agent_id)
+            if not agent.use_rag or agent.store is None:
+                continue
+            if agent.store.count() > 0:
+                continue
+            t0 = time.time()
+            n = agent.build_index()
+            print(f"[startup] {agent_id} 索引为空，已自动建立 {n} 个片段，耗时 {time.time() - t0:.2f}s")
+        except Exception as e:  # noqa: BLE001
+            print(f"[startup] {agent_id} 自动建索引失败：{e}")
 
 
 if __name__ == "__main__":
