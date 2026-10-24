@@ -7,6 +7,7 @@
 - `parse_json_block` 做了多重容错，因为模型偶尔会用 ```json 包裹或加解释文字。
 """
 import json
+import math
 import re
 from pathlib import Path
 
@@ -93,6 +94,39 @@ def _as_list(v) -> list:
                     out.append(s)
         return out
     return [str(v)]
+
+
+def _bullet_items(v) -> list:
+    """把要点规整成 [{"text": 主句, "detail": 补充说明}]。
+
+    模型可能给两种形态：
+      · 纯字符串（老格式）        → text=字符串，detail 为空
+      · {"text": "...", "detail": "..."} → 拆成主句 + 补充说明，渲染时分行显示
+    这样既兼容旧数据，又能让新版提示词产出的「要点 + 例子」完整展示出来。
+    """
+    out = []
+    if v is None:
+        return out
+    if isinstance(v, str):
+        v = [s.strip() for s in re.split(r"[\n;；]+", v) if s.strip()]
+    if not isinstance(v, (list, tuple)):
+        v = [v]
+    for x in v:
+        if isinstance(x, dict):
+            text = str(x.get("text") or x.get("point") or x.get("标题") or "").strip()
+            detail = str(x.get("detail") or x.get("desc") or x.get("说明") or "").strip()
+            if not text and detail:
+                text, detail = detail, ""
+            if not text:
+                # 兜底：任意键值对拼成 "k：v"
+                text = "：".join(str(val) for val in x.values() if val)
+            if text:
+                out.append({"text": text, "detail": detail})
+        else:
+            s = str(x).strip()
+            if s:
+                out.append({"text": s, "detail": ""})
+    return out
 
 
 # ————————————————————————————————————————————————
@@ -477,7 +511,9 @@ def build_pptx(spec: dict, out_path: str, template_path: str = None,
         page_no += 1
         stype = str(item.get("type") or "content").strip().lower()
         title = str(item.get("title") or "").strip()
-        bullets = _as_list(item.get("bullets"))
+        raw_bullets = item.get("bullets")
+        bullets = _as_list(raw_bullets)       # 目录/章节页用纯文本
+        items = _bullet_items(raw_bullets)    # 要点/数据页用「主句 + 补充说明」
         note = str(item.get("note") or "").strip()
         has_img = idx in images_map
 
@@ -554,14 +590,20 @@ def build_pptx(spec: dict, out_path: str, template_path: str = None,
             else:
                 btop = 176
             put_image(s, idx, (700, 150, 520, 470))
-            if bullets:
-                size = 24 if len(bullets) <= 4 else 21
-                for i, b in enumerate(bullets):
-                    y = btop + i * 46
-                    if y + 40 > C_Y:
+            if items:
+                size = 21 if len(items) <= 4 else 19
+                yy = btop
+                for it in items:
+                    step = 46 if not it["detail"] else 70
+                    if yy + step > C_Y - 12:
                         break
-                    rect(s, PAD_X, y + 13, 8, 8, MID, MSO_SHAPE.OVAL)
-                    text(s, PAD_X + 24, y, area_w - 24, 40, b, size, TXT)
+                    rect(s, PAD_X, yy + 12, 8, 8, MID, MSO_SHAPE.OVAL)
+                    text(s, PAD_X + 24, yy, area_w - 24, 30, it["text"], size, TXT,
+                         bold=bool(it["detail"]))
+                    if it["detail"]:
+                        text(s, PAD_X + 24, yy + 26, area_w - 24, 38,
+                             it["detail"], size - 4, SUB, spacing=1.3)
+                    yy += step
             footer(s)
 
         # ---------------- 要点页（默认） ----------------
@@ -571,24 +613,73 @@ def build_pptx(spec: dict, out_path: str, template_path: str = None,
             page_header(s, title)
 
             # 有配图 → 左文右图双栏；无配图 → 单栏
-            text_w = 600 if has_img else CANVAS_W - PAD_X * 2 - 70
+            text_w = 640 if has_img else CANVAS_W - PAD_X * 2 - 70
             if has_img:
-                put_image(s, idx, (700, 152, 520, 468))
+                put_image(s, idx, (760, 150, 460, 470))
 
-            n = max(1, len(bullets))
             top = 168
-            avail = C_Y - top - 20
-            row_h = min(96, max(52, int(avail / n)))
-            size = (26 if n <= 3 else (23 if n <= 5 else 20)) if not has_img else \
-                   (23 if n <= 3 else (20 if n <= 5 else 18))
-            for i, b in enumerate(bullets):
-                y = top + i * row_h
-                if y + 48 > C_Y:
-                    break
-                text(s, PAD_X, y + 2, 62, 40, f"{i + 1:02d}", size + 2, MID, bold=True)
-                text(s, PAD_X + 70, y, text_w - 70, row_h - 6, b, size, TXT, spacing=1.35)
-                if i < len(bullets) - 1 and y + row_h < C_Y - 10:
-                    rect(s, PAD_X + 70, y + row_h - 12, text_w - 70, 1, LINE)
+
+            # —— 导语条：一句话点明本页讲什么/核心结论，避免整页只有干条目 ——
+            lead = str(item.get("lead") or item.get("summary") or "").strip()
+            if lead:
+                lsize = 16 if has_img else 17
+                chars = max(12, int(text_w / (lsize * 1.02)))
+                lines = max(1, math.ceil(len(lead) / chars))
+                lh = min(120, lines * int(lsize * 1.75) + 22)
+                rect(s, PAD_X, top, text_w, lh, RGBColor(0xEE, 0xF4, 0xFC))
+                rect(s, PAD_X, top, 4, lh, MID)
+                text(s, PAD_X + 16, top, text_w - 32, lh, lead, lsize, SUB,
+                     anchor=MSO_ANCHOR.MIDDLE, spacing=1.5)
+                top += lh + 16
+
+            n = len(items)
+            avail = C_Y - top - 16
+            if n:
+                bw = text_w - 54 - 12
+                # 先按行数估算每条的「视觉重量」，再据总量决定字号：
+                # 条目多、文字长时自动缩字号，保证全部内容都能放进一页。
+                def _lines(txt, px):
+                    chars = max(8, int(bw / (px * 1.06)))
+                    return max(1, math.ceil(len(txt) / chars))
+
+                size = 22 if n <= 3 else (20 if n <= 4 else 18)
+                if has_img:
+                    size -= 2
+                dsize = max(12, size - 5)
+                while size > 13:
+                    units = [_lines(it["text"], size) + (_lines(it["detail"], dsize) if it["detail"] else 0)
+                             for it in items]
+                    gap = 8
+                    need = sum(units) * size * 1.45 + gap * (n - 1)
+                    if need <= avail:
+                        break
+                    size -= 1
+                    dsize = max(11, size - 5)
+                units = [_lines(it["text"], size) + (_lines(it["detail"], dsize) if it["detail"] else 0)
+                         for it in items]
+                gap = 8
+                usable = max(1, avail - gap * (n - 1))
+                total_u = sum(units) or 1
+                lh = size * 1.45
+                dlh = dsize * 1.5
+
+                y = top
+                num_w = 54
+                for i, it in enumerate(items):
+                    h = usable * units[i] / total_u
+                    if h < 34:
+                        break
+                    text(s, PAD_X, y + 2, num_w, 32, f"{i + 1:02d}", size + 2, MID, bold=True)
+                    tlines = _lines(it["text"], size)
+                    text(s, PAD_X + num_w, y, bw, tlines * lh + 4, it["text"],
+                         size, TXT, bold=bool(it["detail"]), spacing=1.4)
+                    if it["detail"]:
+                        dy = y + tlines * lh + 4
+                        text(s, PAD_X + num_w, dy, bw, max(20, h - (dy - y)),
+                             it["detail"], dsize, SUB, spacing=1.45)
+                    if i < n - 1:
+                        rect(s, PAD_X + num_w, y + h + gap / 2 - 1, bw, 1, LINE)
+                    y += h + gap
             footer(s)
 
         if note:

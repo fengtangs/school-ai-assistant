@@ -28,6 +28,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from core import homework as hw
+from core import jobs
 from core.llm import explain_llm_error
 
 router = APIRouter()
@@ -180,6 +181,28 @@ def submit(req: SubmitReq):
 # ————————————————————————— 教师端 —————————————————————————
 @router.post("/api/homework/design")
 def design(req: DesignReq):
+    return _do_design(req, None)
+
+
+@router.post("/api/homework/design/async")
+def design_async(req: DesignReq):
+    """提交 AI 出题任务，立即返回 job_id，前端轮询 /api/jobs/{job_id} 显示进度。"""
+    if not (req.subject or "").strip():
+        raise HTTPException(status_code=400, detail="请至少填写科目")
+    job = jobs.submit("homework_design", lambda j: _do_design(req, j))
+    return {"ok": True, "job_id": job.id}
+
+
+def _do_design(req: DesignReq, job=None) -> dict:
+    """实际执行 AI 出题；job 非空时按阶段上报进度。"""
+    def step(pct, stage, detail=None):
+        if job is not None:
+            job.update(pct, stage, detail)
+
+    step(4, "校验出题参数")
+    step(10, "检索你的教学资料")
+    # 检索 + 大模型出题是一段连续阻塞：用 Ticker 让进度条持续前进到 78%
+    tk = jobs.Ticker(job, 10, 78, "大模型正在出题…").start()
     try:
         draft = hw.design_homework(
             req.dict(exclude={"model"}), model=req.model, teacher_id=req.teacher_id
@@ -194,6 +217,11 @@ def design(req: DesignReq):
         raise HTTPException(status_code=502, detail=msg)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=_explain_design_error(e))
+    finally:
+        tk.stop()
+
+    step(84, "校验题目与分值", f"共 {len(draft.get('questions') or [])} 道题")
+    step(94, "整理题目")
     return {
         "ok": True,
         "title": draft["title"],

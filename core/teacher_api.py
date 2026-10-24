@@ -21,6 +21,7 @@ from core.docgen import build_docx, build_pptx, parse_json_block
 from core.llm import get_llm
 from core.tasks import build_messages, get_task, list_tasks
 from core.teacher import TeacherStore, safe_filename, safe_teacher_id
+from core import jobs
 
 router = APIRouter()
 
@@ -221,12 +222,13 @@ class GenerateReq(BaseModel):
     with_images: bool = True     # 课件：是否为各页生成并插入配图
 
 
-def _resolve_slide_images(spec: dict, limit: int = None) -> tuple:
+def _resolve_slide_images(spec: dict, limit: int = None, progress=None) -> tuple:
     """为课件各页生成配图，返回 ({页序号: 图片路径}, 统计信息)。
 
     · 只处理 content / data 页，且必须有 image_prompt；
     · limit 控制成本与耗时（每张约 3-10 秒），默认取环境变量 PPT_MAX_IMAGES（缺省 6）；
-    · 任何一张失败都不影响其余页，也不影响 PPT 生成。
+    · 任何一张失败都不影响其余页，也不影响 PPT 生成；
+    · progress(done, total, ok) 供前端进度条显示「生成配图 2/5」。
     """
     from core import images as imggen
 
@@ -240,23 +242,32 @@ def _resolve_slide_images(spec: dict, limit: int = None) -> tuple:
         return {}, {"enabled": False, "reason": "当前后端不支持配图（需 custom 网关密钥）"}
 
     slides = spec.get("slides") if isinstance(spec.get("slides"), list) else []
-    mapping, done, failed = {}, 0, 0
+    # 先收集任务清单，才能算出配图总数、给出准确进度
+    candidates = []
     for idx, s in enumerate(slides):
         if not isinstance(s, dict):
             continue
         if str(s.get("type") or "").lower() not in ("content", "data"):
             continue
         prompt = str(s.get("image_prompt") or "").strip()
-        if not prompt:
-            continue
-        if done + failed >= limit:
-            break
+        if prompt:
+            candidates.append((idx, prompt))
+    candidates = candidates[:limit]
+
+    mapping, done, failed = {}, 0, 0
+    total = len(candidates)
+    for i, (idx, prompt) in enumerate(candidates):
         path = imggen.generate_image(prompt)
         if path:
             mapping[idx] = path
             done += 1
         else:
             failed += 1
+        if progress is not None:
+            try:
+                progress(i + 1, total, bool(path))
+            except Exception:  # noqa: BLE001  进度回调失败不能影响主流程
+                pass
 
     return mapping, {
         "enabled": True,
@@ -286,8 +297,19 @@ def _preview_from_spec(spec: dict, task: dict) -> str:
                 continue
             lines.append("")
             lines.append(f"## {i}. {s.get('title', '')}")
+            lead = str(s.get("lead") or "").strip()
+            if lead:
+                lines.append(f"*{lead}*")
             for b in (s.get("bullets") or []):
-                lines.append(f"- {b}")
+                if isinstance(b, dict):
+                    text = str(b.get("text") or "").strip()
+                    detail = str(b.get("detail") or "").strip()
+                    if text:
+                        lines.append(f"- {text}")
+                    if detail:
+                        lines.append(f"  > {detail}")
+                else:
+                    lines.append(f"- {b}")
             if s.get("note"):
                 lines.append(f"  > 备注：{s['note']}")
     sections = spec.get("sections")
@@ -305,8 +327,17 @@ def _preview_from_spec(spec: dict, task: dict) -> str:
     return "\n".join(lines).strip() or "（模型未返回可展示的内容）"
 
 
-@router.post("/api/teacher/generate")
-def generate_material(req: GenerateReq):
+def _do_generate(req: GenerateReq, job=None) -> dict:
+    """实际执行生成。job 非空时按阶段上报进度（供前端进度条）。
+
+    阶段划分刻意对应教师的心理预期：找资料 → 写内容 → 排版 → 出图 → 生成文件，
+    这样进度条上的文字本身就是一句「现在在做什么」的解释。
+    """
+    def step(pct, stage, detail=None):
+        if job is not None:
+            job.update(pct, stage, detail)
+
+    step(3, "校验任务与模型")
     store = _store_or_400(req.teacher_id)
     try:
         task = get_task(req.task)
@@ -320,6 +351,7 @@ def generate_material(req: GenerateReq):
             detail="大模型未就绪，请检查 .env 中的 LLM_PROVIDER 与对应密钥",
         )
 
+    step(8, "检索你的教学资料")
     # 用「课程 + 课题 + 补充要求」拼检索 query，比只搜标题更准
     query_parts = [
         str(req.params.get("course") or ""),
@@ -331,46 +363,82 @@ def generate_material(req: GenerateReq):
     query = " ".join(p for p in query_parts if p.strip()) or task["name"]
     context, sources = store.build_context(query, top_k=8)
 
+    step(
+        14,
+        "组装提示词",
+        (f"引用 {len(sources)} 份资料" if sources else "未检索到资料，按通用框架生成"),
+    )
     messages = build_messages(req.task, req.params, context)
 
     # 思考型模型的 reasoning 消耗波动极大（实测同一提示词从 143 到 4773 token 不等），
     # max_tokens 偏小时会出现「思考完了但正文为空」。这里用较大的额度并做一次重试。
-    max_tokens = int(os.getenv("TEACHER_MAX_TOKENS", "8192"))
+    max_tokens = int(os.getenv("TEACHER_MAX_TOKENS", "16384"))
     raw = ""
     last_err = ""
-    for attempt in range(2):
-        try:
-            raw = llm.chat(
-                messages,
-                model=req.model,
-                json_mode=True,
-                temperature=0.35,
-                max_tokens=max_tokens,
+    # 大模型调用是整条链路里最长的阻塞段，用 Ticker 让进度条在这段时间里持续前进
+    with jobs.Ticker(job, 14, 64, "大模型正在撰写内容…"):
+        for attempt in range(2):
+            msgs = messages
+            if attempt > 0:
+                # 上一次返回空/被截断时，追加一条收敛指令：内容更紧凑，优先保证 JSON 完整
+                msgs = messages + [{
+                    "role": "user",
+                    "content": "上一次输出因篇幅过长被截断了。请重新输出，"
+                               "**压缩篇幅**：每个要点 detail 控制在 30-40 字，"
+                               "note 不超过 50 字，务必输出完整且合法的 JSON。",
+                }]
+            try:
+                raw = llm.chat(
+                    msgs,
+                    model=req.model,
+                    json_mode=True,
+                    temperature=0.35,
+                    max_tokens=max_tokens,
+                )
+            except Exception as e:  # noqa: BLE001
+                last_err = f"调用大模型失败: {e}"
+                continue
+            if raw and raw.strip():
+                break
+            last_err = (
+                f"模型返回空内容（第 {attempt + 1} 次）。通常是因为思考过程耗尽了 "
+                f"max_tokens={max_tokens}，可调大 TEACHER_MAX_TOKENS 或换个模型重试"
             )
-        except Exception as e:  # noqa: BLE001
-            last_err = f"调用大模型失败: {e}"
-            continue
-        if raw and raw.strip():
-            break
-        last_err = (
-            f"模型返回空内容（第 {attempt + 1} 次）。通常是因为思考过程耗尽了 "
-            f"max_tokens={max_tokens}，可调大 TEACHER_MAX_TOKENS 或换个模型重试"
-        )
 
     if not raw or not raw.strip():
         raise HTTPException(status_code=502, detail=last_err or "大模型未返回内容")
 
+    step(66, "解析结构化内容")
     try:
         spec = parse_json_block(raw)
-    except ValueError as e:
-        # 解析失败时把模型原文返回，便于教师直接复制使用，而不是白等一场
-        return {
-            "ok": False,
-            "error": str(e),
-            "raw_text": raw[:8000],
-            "sources": sources,
-            "hint": "模型未按 JSON 格式输出，已返回原文，可直接复制使用或换个模型重试。",
-        }
+    except ValueError as first_err:
+        # 常见原因是输出过长被截断（JSON 不完整）。用「收敛篇幅」的指令再试一次，
+        # 而不是直接把半截内容丢给教师。
+        retry_raw = ""
+        try:
+            with jobs.Ticker(job, 66, 72, "内容过长，正在压缩后重试…"):
+                retry_raw = llm.chat(
+                    messages + [{
+                        "role": "user",
+                        "content": "上一次输出 JSON 不完整（可能被截断）。请重新输出，"
+                                   "**大幅压缩篇幅**：每页 4 条要点、detail 30-40 字，"
+                                   "确保 JSON 结构完整闭合。",
+                    }],
+                    model=req.model,
+                    json_mode=True,
+                    temperature=0.3,
+                    max_tokens=max_tokens,
+                )
+            spec = parse_json_block(retry_raw)
+            raw = retry_raw
+        except Exception:  # noqa: BLE001  重试也失败则回退到原文
+            return {
+                "ok": False,
+                "error": str(first_err),
+                "raw_text": (raw or "")[:8000],
+                "sources": sources,
+                "hint": "模型未按 JSON 格式输出，已返回原文，可直接复制使用或换个模型重试。",
+            }
 
     ext = "pptx" if task["output"] == "pptx" else "docx"
     file_id = uuid.uuid4().hex[:16]
@@ -382,7 +450,20 @@ def generate_material(req: GenerateReq):
     tpl_path = _template_path(store.teacher_id) if (ext == "pptx" and req.use_template) else None
     img_map, img_info = {}, {}
     if ext == "pptx" and req.with_images:
-        img_map, img_info = _resolve_slide_images(spec)
+        step(70, "生成课件配图", "正在逐页绘制示意图")
+        img_map, img_info = _resolve_slide_images(
+            spec,
+            progress=lambda done, total, ok: step(
+                70 + 22 * done / max(total, 1),
+                "生成课件配图",
+                f"已完成 {done}/{total} 张",
+            ),
+        )
+        step(92, "排版生成课件")
+    elif ext == "pptx":
+        step(80, "排版生成课件")
+    else:
+        step(80, "排版生成文档")
 
     try:
         if ext == "pptx":
@@ -394,6 +475,7 @@ def generate_material(req: GenerateReq):
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"生成文件失败: {e}")
 
+    step(98, "整理结果")
     meta = {
         "file_id": file_id,
         "teacher_id": store.teacher_id,
@@ -416,6 +498,30 @@ def generate_material(req: GenerateReq):
     meta["ok"] = True
     meta["preview"] = _preview_from_spec(spec, task)
     return meta
+
+
+@router.post("/api/teacher/generate")
+def generate_material(req: GenerateReq):
+    """同步生成（兼容旧调用方：一次性等结果）。"""
+    return _do_generate(req, None)
+
+
+@router.post("/api/teacher/generate/async")
+def generate_material_async(req: GenerateReq):
+    """提交生成任务，立即返回 job_id。
+
+    前端随后轮询 /api/jobs/{job_id}，就能拿到百分比与当前阶段，
+    用于显示进度条而不是让用户干等一个转圈。
+    """
+    # 参数错误同步返回，避免用户要等轮询才发现填错了
+    _store_or_400(req.teacher_id)
+    try:
+        get_task(req.task)
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    job = jobs.submit("teacher_generate", lambda j: _do_generate(req, j))
+    return {"ok": True, "job_id": job.id}
 
 
 # ————————————————————————— 下载与历史 —————————————————————————

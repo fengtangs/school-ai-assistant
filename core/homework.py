@@ -300,7 +300,7 @@ def design_homework(params: dict, model: str = None, teacher_id: str = None) -> 
         context=context,
     )
 
-    max_tokens = int(os.getenv("TEACHER_MAX_TOKENS", "8192"))
+    max_tokens = int(os.getenv("TEACHER_MAX_TOKENS", "16384"))
     messages = [
         {"role": "system", "content": _DESIGN_SYSTEM},
         {"role": "user", "content": user},

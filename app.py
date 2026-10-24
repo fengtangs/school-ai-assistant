@@ -18,6 +18,7 @@ from core.embeddings import get_embedding_provider
 from core.llm import RECOMMENDED_MODELS, list_custom_models, explain_llm_error
 from core.teacher_api import router as teacher_router
 from core.homework_api import router as homework_router
+from core import jobs as job_store
 
 app = FastAPI(title="校园AI问答助手（多智能体）", version="0.4.0")
 app.add_middleware(
@@ -134,6 +135,19 @@ def models(refresh: bool = QueryParam(False)):
 @app.get("/api/agents")
 def agents():
     return {"agents": list_agents(), "default": get_default_agent_id()}
+
+
+@app.get("/api/jobs/{job_id}")
+def job_status(job_id: str):
+    """查询后台生成任务的进度（备课/教案/课件/AI 出题共用）。
+
+    前端提交生成任务后拿到 job_id，按 0.5 秒轮询本接口，
+    读取 pct（百分比）、stage（当前阶段）与最终 result。
+    """
+    job = job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在或已过期，请重新发起生成")
+    return job.snapshot()
 
 
 @app.get("/api/health")
