@@ -391,3 +391,34 @@ def get_llm():
         _env("OLLAMA_BASE_URL", "http://192.168.1.103:11434/v1"),
         _env("OLLAMA_MODEL", "deepseek-r1:14b"),
     )
+
+
+# ————————————————————————————————————————————————
+# 错误翻译：把底层 SDK 异常转成可自助排查的中文提示
+# ————————————————————————————————————————————————
+def explain_llm_error(e: Exception) -> str:
+    """把大模型底层异常翻译成用户/教师能看懂、能自助排查的中文提示。"""
+    msg = str(e) or e.__class__.__name__
+    low = msg.lower()
+    _conn_keys = (
+        "connection", "timed out", "timeout", "disconnected",
+        "refused", "unreachable", "errno 10060", "errno 10061", "winerror",
+    )
+    if any(k in low for k in _conn_keys):
+        return (
+            "无法连接大模型服务。请依次排查："
+            "① 项目根目录是否有 .env（可参考 .env.example 创建）；"
+            "② 当前 LLM_PROVIDER 用的是哪个后端；"
+            "③ 若用 ollama，确认那台机器已开机且 OLLAMA_BASE_URL 可访问；"
+            "④ 若用 custom/deepseek，确认网关地址正确、网络可达。"
+            f"（原始错误：{msg}）"
+        )
+    if "401" in msg or "unauthor" in low or "api key" in low or "invalid_api_key" in low:
+        return f"大模型密钥无效或未授权，请检查 .env 中对应后端的 API Key。（原始错误：{msg}）"
+    if "404" in msg or "not found" in low:
+        return f"模型名称不存在或接口地址有误，请检查 .env 中的 MODEL 与 BASE_URL。（原始错误：{msg}）"
+    if "insufficient" in low or "quota" in low or "balance" in low:
+        return f"大模型账户额度不足或欠费，请充值后重试。（原始错误：{msg}）"
+    if "rate" in low and "limit" in low:
+        return f"触发大模型限流，请稍后重试。（原始错误：{msg}）"
+    return f"调用大模型失败：{msg}"

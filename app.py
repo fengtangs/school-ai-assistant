@@ -5,6 +5,7 @@
 """
 import os
 import json
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -14,21 +15,28 @@ from pydantic import BaseModel
 
 from agentkit import list_agents, get_agent, get_default_agent_id, build_all
 from core.embeddings import get_embedding_provider
-from core.llm import RECOMMENDED_MODELS, list_custom_models
+from core.llm import RECOMMENDED_MODELS, list_custom_models, explain_llm_error
 from core.teacher_api import router as teacher_router
+from core.homework_api import router as homework_router
+from core import jobs as job_store
 
-app = FastAPI(title="校园AI问答助手（多智能体）", version="0.3.0")
+app = FastAPI(title="校园AI问答助手（多智能体）", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+# 222
 )
 # 教师助手（资料上传 / 材料生成 / 文件下载）
 app.include_router(teacher_router)
+# 作业中心（AI 出题 / 布置 / 学情分析）
+app.include_router(homework_router)
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "ui", "index.html")
 TEACHER_UI_PATH = os.path.join(os.path.dirname(__file__), "ui", "teacher.html")
+TEACHER_HW_PATH = os.path.join(os.path.dirname(__file__), "ui", "homework_teacher.html")
+STUDENT_HW_PATH = os.path.join(os.path.dirname(__file__), "ui", "homework_student.html")
 
 
 def _embedding_provider_label() -> str:
@@ -52,14 +60,39 @@ _embedding_provider_name = _embedding_provider_label()
 
 class Query(BaseModel):
     question: str
-    agent: str = None  # 智能体 id，留空则用默认
-    model: str = None  # 可选：临时指定模型，留空则用 .env 里的默认模型
+    # 注意：Pydantic v2 下必须显式 Optional，否则前端传 null 会被判为 422
+    agent: Optional[str] = None   # 智能体 id，留空则用默认
+    model: Optional[str] = None   # 可选：临时指定模型，留空则用 .env 里的默认模型
+
+
+class RebuildReq(BaseModel):
+    """重建索引的请求体：只有 agent 一个可选字段。
+
+    不能复用 Query —— 那样 question 是必填项，前端只传 {agent} 会直接 422。
+    """
+    agent: Optional[str] = None
+
+
+def _html_response(path: str):
+    """返回页面，并禁用「启发式缓存」。
+
+    FileResponse 默认不写 Cache-Control，浏览器会自己猜一个新鲜期，
+    结果就是「代码改了、刷新还是旧页面」，得手动 Ctrl+F5 才看得见。
+    这里统一加 no-cache：浏览器每次都带 ETag 来问，没变就 304，几乎不花带宽。
+    """
+    return FileResponse(
+        path,
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @app.get("/")
 def index():
     if os.path.exists(UI_PATH):
-        return FileResponse(UI_PATH)
+        return _html_response(UI_PATH)
     return {"message": "UI 未找到，请访问 /docs 使用接口"}
 
 
@@ -67,8 +100,24 @@ def index():
 def teacher_index():
     """教师工作台页面（资料上传、材料生成、下载）。"""
     if os.path.exists(TEACHER_UI_PATH):
-        return FileResponse(TEACHER_UI_PATH)
+        return _html_response(TEACHER_UI_PATH)
     raise HTTPException(status_code=404, detail="教师工作台页面未找到")
+
+
+@app.get("/homework/teacher")
+def homework_teacher_index():
+    """教师作业平台页面（AI 出题 / 布置 / 学情分析）。"""
+    if os.path.exists(TEACHER_HW_PATH):
+        return _html_response(TEACHER_HW_PATH)
+    raise HTTPException(status_code=404, detail="教师作业平台页面未找到")
+
+
+@app.get("/homework/student")
+def homework_student_index():
+    """校园小助手·学生作业页面（按科目选作业、作答、查看成绩）。"""
+    if os.path.exists(STUDENT_HW_PATH):
+        return _html_response(STUDENT_HW_PATH)
+    raise HTTPException(status_code=404, detail="学生作业页面未找到")
 
 
 @app.get("/api/models")
@@ -112,6 +161,19 @@ def agents():
     return {"agents": list_agents(), "default": get_default_agent_id()}
 
 
+@app.get("/api/jobs/{job_id}")
+def job_status(job_id: str):
+    """查询后台生成任务的进度（备课/教案/课件/AI 出题共用）。
+
+    前端提交生成任务后拿到 job_id，按 0.5 秒轮询本接口，
+    读取 pct（百分比）、stage（当前阶段）与最终 result。
+    """
+    job = job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在或已过期，请重新发起生成")
+    return job.snapshot()
+
+
 @app.get("/api/health")
 def health():
     agents_info = []
@@ -144,7 +206,12 @@ def chat(q: Query, stream: bool = QueryParam(False)):
 
     # 非流式：直接返回完整 JSON（向后兼容）
     if not stream:
-        return agent.ask(q.question.strip(), model=q.model)
+        try:
+            return agent.ask(q.question.strip(), model=q.model)
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=explain_llm_error(e))
 
     # 流式：以 SSE（text/event-stream）逐事件推送 ask_stream 的结果
     def event_stream():
@@ -152,13 +219,13 @@ def chat(q: Query, stream: bool = QueryParam(False)):
             for ev in agent.ask_stream(q.question.strip(), model=q.model):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': explain_llm_error(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.post("/api/rebuild")
-def rebuild(q: Query = None):
+def rebuild(q: RebuildReq = None):
     agent_id = (q.agent if q else None) or None
     if agent_id:
         try:
@@ -167,6 +234,36 @@ def rebuild(q: Query = None):
             raise HTTPException(status_code=404, detail=f"未找到智能体: {agent_id}")
         return {"agent": agent_id, "indexed_chunks": n}
     return {"agents": build_all()}
+
+
+@app.on_event("startup")
+def _warm_up_indexes():
+    """启动时自动补齐/修复索引。
+
+    1) 索引为空（data/processed 被清、换机器）→ 建一次；
+    2) 索引存在但 embedding 配置变了（如 mock → 远程真向量，512 → 4096 维）
+       → 旧向量与新查询不可比，直接重算，避免用户提问时才撞见 StaleIndexError。
+
+    索引是落盘的，正常启动时两种情况都不会命中，几乎不增加启动耗时。
+    """
+    import time
+
+    for item in list_agents():
+        agent_id = item["id"]
+        try:
+            agent = get_agent(agent_id)
+            if not agent.use_rag or agent.store is None:
+                continue
+            empty = agent.store.count() == 0
+            stale = (not empty) and agent.store.is_stale()
+            if not empty and not stale:
+                continue
+            t0 = time.time()
+            n = agent.build_index()
+            why = "索引为空" if empty else "索引与当前 embedding 不一致"
+            print(f"[startup] {agent_id} {why}，已自动重建 {n} 个片段，耗时 {time.time() - t0:.2f}s")
+        except Exception as e:  # noqa: BLE001
+            print(f"[startup] {agent_id} 自动建索引失败：{e}")
 
 
 if __name__ == "__main__":

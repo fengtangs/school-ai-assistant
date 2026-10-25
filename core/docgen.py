@@ -7,6 +7,7 @@
 - `parse_json_block` 做了多重容错，因为模型偶尔会用 ```json 包裹或加解释文字。
 """
 import json
+import math
 import re
 from pathlib import Path
 
@@ -93,6 +94,39 @@ def _as_list(v) -> list:
                     out.append(s)
         return out
     return [str(v)]
+
+
+def _bullet_items(v) -> list:
+    """把要点规整成 [{"text": 主句, "detail": 补充说明}]。
+
+    模型可能给两种形态：
+      · 纯字符串（老格式）        → text=字符串，detail 为空
+      · {"text": "...", "detail": "..."} → 拆成主句 + 补充说明，渲染时分行显示
+    这样既兼容旧数据，又能让新版提示词产出的「要点 + 例子」完整展示出来。
+    """
+    out = []
+    if v is None:
+        return out
+    if isinstance(v, str):
+        v = [s.strip() for s in re.split(r"[\n;；]+", v) if s.strip()]
+    if not isinstance(v, (list, tuple)):
+        v = [v]
+    for x in v:
+        if isinstance(x, dict):
+            text = str(x.get("text") or x.get("point") or x.get("标题") or "").strip()
+            detail = str(x.get("detail") or x.get("desc") or x.get("说明") or "").strip()
+            if not text and detail:
+                text, detail = detail, ""
+            if not text:
+                # 兜底：任意键值对拼成 "k：v"
+                text = "：".join(str(val) for val in x.values() if val)
+            if text:
+                out.append({"text": text, "detail": detail})
+        else:
+            s = str(x).strip()
+            if s:
+                out.append({"text": s, "detail": ""})
+    return out
 
 
 # ————————————————————————————————————————————————
@@ -244,42 +278,117 @@ def _set_ea(run, name="微软雅黑"):
     rPr.append(ea)
 
 
-def build_pptx(spec: dict, out_path: str) -> str:
-    """把课件 JSON 渲染成 16:9 的 .pptx。
+def _clear_slides(prs):
+    """清空模板自带的示例页，只保留母版与版式。
 
-    设计规范参考 WorkBuddy-pptx skill 的「学术风」设计原则：
-      · 画布 1280×720 px，三区母版：
-          A 标题区 0–120px / B 内容区 120–660px / C 页脚区 660–720px
-      · 左右安全边距 60px，上下 20px
-      · 色彩面积：主蓝 ≤60%、辅色 ≤30%、强调 ≤10%，中性色补足
-      · 字号阶梯：封面主标 72 / 章节大数字 160 / 页标题 34 / 正文 22–26 / 页脚 14
-      · 每页至少一个「视觉锚点」（超大数字或大色块），避免所有元素大小趋同
+    外部模板通常带几张示例页，若不清空，生成结果末尾会挂着模板作者的样张。
+    """
+    try:
+        sld_id_lst = prs.slides._sldIdLst
+        for sld_id in list(sld_id_lst):
+            r_id = sld_id.rId
+            prs.part.drop_rel(r_id)
+            sld_id_lst.remove(sld_id)
+    except Exception:  # noqa: BLE001  结构异常时宁可不删，也不让生成失败
+        pass
 
-    支持四类版式（由模型输出的 type 决定）：
+
+def _pick_blank_layout(prs):
+    """挑占位符最少的版式作为空白画布（通常是「空白」版式）。"""
+    best, best_n = None, 10 ** 6
+    for lay in prs.slide_layouts:
+        n = len(lay.placeholders)
+        if n < best_n:
+            best, best_n = lay, n
+    return best or prs.slide_layouts[0]
+
+
+def _fit_picture(slide, path, box, conv):
+    """把图片等比缩放后居中放进 box=(x,y,w,h)，不拉伸变形。"""
+    from PIL import Image
+
+    x, y, w, h = box
+    IX, IY, IW, IH = conv
+    try:
+        with Image.open(path) as im:
+            iw, ih = im.size
+    except Exception:  # noqa: BLE001
+        return None
+    if not iw or not ih or w <= 0 or h <= 0:
+        return None
+    scale = min(w / iw, h / ih)
+    dw, dh = iw * scale, ih * scale
+    dx = x + (w - dw) / 2
+    dy = y + (h - dh) / 2
+    try:
+        return slide.shapes.add_picture(path, IX(dx), IY(dy), IW(dw), IH(dh))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def build_pptx(spec: dict, out_path: str, template_path: str = None,
+               images_map: dict = None) -> str:
+    """把课件 JSON 渲染成 16:9 的 .pptx。返回文件路径。
+
+    三种模式：
+      · 纯自建（默认）：按内置「学术风」规范从零排版，画布 1280×720 px。
+      · 外部模板：传入 template_path，以该 .pptx 为底版 —— 继承它的母版、
+        主题配色、字体、背景与装饰，并**按模板画布尺寸等比缩放**所有坐标，
+        这样换成 4:3 或别的尺寸模板也不会错位。
+      · 自动配图：传入 images_map={页序号: 图片本地路径}，对应页改用
+        「左文右图」双栏版式，图片等比缩放居中，不会拉伸变形。
+
+    版式（由模型输出的 type 决定）：
       toc 目录 / section 章节扉页 / content 要点页 / data 数据页
     封面与结束页由程序自动生成，保证一致性。
     """
     from pptx import Presentation
-    from pptx.util import Inches, Pt
+    from pptx.util import Pt, Emu
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
     from pptx.enum.shapes import MSO_SHAPE
 
-    # —— 画布与单位换算（1280px 宽 = 13.333in，故 96px = 1in） ——
-    PXIN = 96.0
+    # —— 画布逻辑尺寸（内部一律按 1280×720 布局，再按模板实际尺寸缩放） ——
+    CANVAS_W, CANVAS_H = 1280, 720
+    EMU_PER_PX = 9525          # 914400 EMU/in ÷ 96 px/in
+    use_template = bool(template_path)
 
-    def I(px):
-        return Inches(px / PXIN)
+    if use_template:
+        prs = Presentation(template_path)
+        _clear_slides(prs)
+        cur_w = prs.slide_width / EMU_PER_PX
+        cur_h = prs.slide_height / EMU_PER_PX
+        KX = cur_w / CANVAS_W if cur_w > 0 else 1.0
+        KY = cur_h / CANVAS_H if cur_h > 0 else 1.0
+    else:
+        prs = Presentation()
+        KX = KY = 1.0
+        prs.slide_width = Emu(int(CANVAS_W * EMU_PER_PX))
+        prs.slide_height = Emu(int(CANVAS_H * EMU_PER_PX))
+
+    KF = min(KX, KY)           # 字号按较小比例缩放，防止文字撑破版面
+
+    def IX(px):
+        return Emu(int(round(px * KX * EMU_PER_PX)))
+
+    def IY(px):
+        return Emu(int(round(px * KY * EMU_PER_PX)))
+
+    def IW(px):
+        return IX(px)
+
+    def IH(px):
+        return IY(px)
 
     def F(px):
-        """px → pt（96dpi 下 1px = 0.75pt）"""
-        return Pt(px * 0.75)
+        """px → pt（96dpi 下 1px = 0.75pt），并按模板缩放。"""
+        return Pt(px * 0.75 * KF)
 
-    # —— 学术风配色 ——
+    blank = _pick_blank_layout(prs)
+
+    # —— 学术风配色（用模板时仍沿用，模板主题色体现在背景与母版装饰上） ——
     MAIN = RGBColor(0x1E, 0x4F, 0xA8)
     DARK = RGBColor(0x0E, 0x3F, 0x8C)
-    LIGHT = RGBColor(0xE8, 0xEF, 0xF8)
-    LIGHT2 = RGBColor(0xF0, 0xF5, 0xFC)
     MID = RGBColor(0x3D, 0x7B, 0xD9)
     TXT = RGBColor(0x1A, 0x22, 0x30)
     SUB = RGBColor(0x4A, 0x55, 0x68)
@@ -291,15 +400,11 @@ def build_pptx(spec: dict, out_path: str) -> str:
     PAD_X, PAD_Y = 60, 20
     A_H = 120          # A 标题区高度
     C_Y = 660          # C 页脚区起始
-    CANVAS_W, CANVAS_H = 1280, 720
 
-    prs = Presentation()
-    prs.slide_width = I(CANVAS_W)
-    prs.slide_height = I(CANVAS_H)
-    blank = prs.slide_layouts[6]
+    images_map = images_map or {}
 
     def rect(s, x, y, w, h, color, shape=MSO_SHAPE.RECTANGLE):
-        sp = s.shapes.add_shape(shape, I(x), I(y), I(w), I(h))
+        sp = s.shapes.add_shape(shape, IX(x), IY(y), IW(w), IH(h))
         sp.fill.solid()
         sp.fill.fore_color.rgb = color
         sp.line.fill.background()
@@ -308,7 +413,7 @@ def build_pptx(spec: dict, out_path: str) -> str:
 
     def text(s, x, y, w, h, content, size, color=TXT, bold=False,
              align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, spacing=1.0):
-        tb = s.shapes.add_textbox(I(x), I(y), I(w), I(h))
+        tb = s.shapes.add_textbox(IX(x), IY(y), IW(w), IH(h))
         tf = tb.text_frame
         tf.word_wrap = True
         tf.vertical_anchor = anchor
@@ -326,6 +431,13 @@ def build_pptx(spec: dict, out_path: str) -> str:
         r.font.bold = bold
         r.font.color.rgb = color
         return tb
+
+    def put_image(s, idx, box):
+        """若该页有配图则插入并返回 True。"""
+        path = images_map.get(idx)
+        if not path:
+            return False
+        return _fit_picture(s, path, box, (IX, IY, IW, IH)) is not None
 
     # —— 元信息 ——
     course = str(spec.get("course") or "").strip()
@@ -357,17 +469,21 @@ def build_pptx(spec: dict, out_path: str) -> str:
     # ==================== 封面 ====================
     s = prs.slides.add_slide(blank)
     page_no += 1
-    rect(s, 0, 0, CANVAS_W, CANVAS_H, DARK)
-    # 右侧装饰大色块（视觉锚点）
-    rect(s, CANVAS_W - 300, 0, 300, CANVAS_H, MAIN)
-    rect(s, CANVAS_W - 300, 0, 8, CANVAS_H, MID)
+    # 用模板时不再铺满深蓝底色，避免盖住模板自带的封面设计
+    if not use_template:
+        rect(s, 0, 0, CANVAS_W, CANVAS_H, DARK)
+        rect(s, CANVAS_W - 300, 0, 300, CANVAS_H, MAIN)
+        rect(s, CANVAS_W - 300, 0, 8, CANVAS_H, MID)
+
+    title_color = WHITE if not use_template else DARK
+    sub_color = RGBColor(0xA8, 0xC4, 0xE8) if not use_template else SUB
 
     if course:
-        text(s, PAD_X + 20, 120, 700, 28, course, 20, RGBColor(0xA8, 0xC4, 0xE8))
-    # 装饰短线
+        text(s, PAD_X + 20, 120, 700, 28, course, 20,
+             RGBColor(0xA8, 0xC4, 0xE8) if not use_template else MID)
     rect(s, PAD_X + 20, 168, 72, 5, MID)
 
-    tb = s.shapes.add_textbox(I(PAD_X + 20), I(210), I(CANVAS_W - 400), I(280))
+    tb = s.shapes.add_textbox(IX(PAD_X + 20), IY(210), IW(CANVAS_W - 400), IH(280))
     tf = tb.text_frame
     tf.word_wrap = True
     tf.margin_left = 0
@@ -381,21 +497,25 @@ def build_pptx(spec: dict, out_path: str) -> str:
     _set_ea(r)
     r.font.size = F(72 if len(title_text) <= 14 else 56)
     r.font.bold = True
-    r.font.color.rgb = WHITE
+    r.font.color.rgb = title_color
 
     if subtitle:
-        text(s, PAD_X + 20, 458, CANVAS_W - 400, 40, subtitle, 26, RGBColor(0xA8, 0xC4, 0xE8))
+        text(s, PAD_X + 20, 458, CANVAS_W - 400, 40, subtitle, 26, sub_color)
     if audience:
-        text(s, PAD_X + 20, 512, CANVAS_W - 400, 30, "适用对象：" + audience, 20, RGBColor(0x7F, 0xA0, 0xCC))
+        text(s, PAD_X + 20, 512, CANVAS_W - 400, 30, "适用对象：" + audience, 20,
+             RGBColor(0x7F, 0xA0, 0xCC) if not use_template else HINT)
 
     # ==================== 内容页 ====================
-    for item in slides:
+    for idx, item in enumerate(slides):
         s = prs.slides.add_slide(blank)
         page_no += 1
         stype = str(item.get("type") or "content").strip().lower()
         title = str(item.get("title") or "").strip()
-        bullets = _as_list(item.get("bullets"))
+        raw_bullets = item.get("bullets")
+        bullets = _as_list(raw_bullets)       # 目录/章节页用纯文本
+        items = _bullet_items(raw_bullets)    # 要点/数据页用「主句 + 补充说明」
         note = str(item.get("note") or "").strip()
+        has_img = idx in images_map
 
         # ---------------- 目录页 ----------------
         if stype == "toc":
@@ -410,7 +530,6 @@ def build_pptx(spec: dict, out_path: str) -> str:
                 size = 26 if n <= 5 else 22
                 for i, b in enumerate(bullets):
                     y = top + i * row_h
-                    # 大编号作为视觉节奏
                     text(s, PAD_X, y, 76, row_h - 8, f"{i + 1:02d}", size + 8, MID, bold=True)
                     text(s, PAD_X + 84, y + 4, CANVAS_W - PAD_X * 2 - 84, row_h - 8, b, size, TXT)
                     if i < n - 1:
@@ -421,7 +540,6 @@ def build_pptx(spec: dict, out_path: str) -> str:
         elif stype == "section":
             num = str(item.get("number") or "").strip()
             rect(s, 0, 0, CANVAS_W, CANVAS_H, WHITE)
-            # 左侧深蓝块承载超大数字（视觉锚点）
             rect(s, 0, 0, 430, CANVAS_H, DARK)
             if num:
                 text(s, 52, 250, 340, 220, num, 160, RGBColor(0x4E, 0x7C, 0xC8), bold=True)
@@ -438,6 +556,7 @@ def build_pptx(spec: dict, out_path: str) -> str:
                     y = top + i * 42
                     rect(s, tx, y + 11, 7, 7, MID, MSO_SHAPE.OVAL)
                     text(s, tx + 22, y, tw - 22, 32, b, size, SUB)
+            footer(s)
 
         # ---------------- 数据页 ----------------
         elif stype == "data":
@@ -447,32 +566,44 @@ def build_pptx(spec: dict, out_path: str) -> str:
             if not isinstance(stats, list):
                 stats = []
             stats = [x for x in stats if isinstance(x, dict)][:4]
+            # 右侧若有配图，KPI 卡片只在左半区排布
+            area_w = 620 if has_img else CANVAS_W - PAD_X * 2
             if stats:
                 n = len(stats)
                 gap = 24
-                cw = int((CANVAS_W - PAD_X * 2 - gap * (n - 1)) / n)
-                cy, ch = 160, 230
+                cols = 2 if (has_img and n > 2) else n
+                cw = int((area_w - gap * (cols - 1)) / max(cols, 1))
+                cy, ch, row_gap = 160, 170, 16
                 for i, st in enumerate(stats):
-                    cx = PAD_X + i * (cw + gap)
-                    rect(s, cx, cy, cw, ch, WHITE)
-                    rect(s, cx, cy, cw, 6, MAIN)
+                    r_i, c_i = divmod(i, cols)
+                    cx = PAD_X + c_i * (cw + gap)
+                    yy = cy + r_i * (ch + row_gap)
+                    rect(s, cx, yy, cw, ch, WHITE)
+                    rect(s, cx, yy, cw, 6, MAIN)
                     val = str(st.get("value") or "").strip()
                     lab = str(st.get("label") or "").strip()
-                    # KPI 巨数字 = 该页视觉锚点
-                    text(s, cx + 24, cy + 52, cw - 48, 96,
-                         val, 72 if len(val) <= 5 else 52, MAIN, bold=True)
-                    text(s, cx + 24, cy + 158, cw - 48, 56, lab, 20, SUB)
-                btop = cy + ch + 40
+                    text(s, cx + 22, yy + 40, cw - 44, 84,
+                         val, 60 if len(val) <= 5 else 44, MAIN, bold=True)
+                    text(s, cx + 22, yy + 124, cw - 44, 40, lab, 19, SUB)
+                rows = (n + cols - 1) // cols
+                btop = cy + rows * (ch + row_gap) + 20
             else:
                 btop = 176
-            if bullets:
-                size = 24 if len(bullets) <= 4 else 21
-                for i, b in enumerate(bullets):
-                    y = btop + i * 46
-                    if y + 40 > C_Y:
+            put_image(s, idx, (700, 150, 520, 470))
+            if items:
+                size = 21 if len(items) <= 4 else 19
+                yy = btop
+                for it in items:
+                    step = 46 if not it["detail"] else 70
+                    if yy + step > C_Y - 12:
                         break
-                    rect(s, PAD_X, y + 13, 8, 8, MID, MSO_SHAPE.OVAL)
-                    text(s, PAD_X + 24, y, CANVAS_W - PAD_X * 2 - 24, 40, b, size, TXT)
+                    rect(s, PAD_X, yy + 12, 8, 8, MID, MSO_SHAPE.OVAL)
+                    text(s, PAD_X + 24, yy, area_w - 24, 30, it["text"], size, TXT,
+                         bold=bool(it["detail"]))
+                    if it["detail"]:
+                        text(s, PAD_X + 24, yy + 26, area_w - 24, 38,
+                             it["detail"], size - 4, SUB, spacing=1.3)
+                    yy += step
             footer(s)
 
         # ---------------- 要点页（默认） ----------------
@@ -480,21 +611,75 @@ def build_pptx(spec: dict, out_path: str) -> str:
             rect(s, 0, 0, CANVAS_W, CANVAS_H, WHITE)
             rect(s, 0, 0, 12, CANVAS_H, MAIN)
             page_header(s, title)
-            n = max(1, len(bullets))
+
+            # 有配图 → 左文右图双栏；无配图 → 单栏
+            text_w = 640 if has_img else CANVAS_W - PAD_X * 2 - 70
+            if has_img:
+                put_image(s, idx, (760, 150, 460, 470))
+
             top = 168
-            avail = C_Y - top - 20
-            row_h = min(96, max(52, int(avail / n)))
-            size = 26 if n <= 3 else (23 if n <= 5 else 20)
-            for i, b in enumerate(bullets):
-                y = top + i * row_h
-                if y + 48 > C_Y:
-                    break
-                # 编号（主色）+ 正文，形成清晰层级
-                text(s, PAD_X, y + 2, 62, 40, f"{i + 1:02d}", size + 2, MID, bold=True)
-                text(s, PAD_X + 70, y, CANVAS_W - PAD_X * 2 - 70, row_h - 6, b, size, TXT,
-                     spacing=1.35)
-                if i < len(bullets) - 1 and y + row_h < C_Y - 10:
-                    rect(s, PAD_X + 70, y + row_h - 12, CANVAS_W - PAD_X * 2 - 70, 1, LINE)
+
+            # —— 导语条：一句话点明本页讲什么/核心结论，避免整页只有干条目 ——
+            lead = str(item.get("lead") or item.get("summary") or "").strip()
+            if lead:
+                lsize = 16 if has_img else 17
+                chars = max(12, int(text_w / (lsize * 1.02)))
+                lines = max(1, math.ceil(len(lead) / chars))
+                lh = min(120, lines * int(lsize * 1.75) + 22)
+                rect(s, PAD_X, top, text_w, lh, RGBColor(0xEE, 0xF4, 0xFC))
+                rect(s, PAD_X, top, 4, lh, MID)
+                text(s, PAD_X + 16, top, text_w - 32, lh, lead, lsize, SUB,
+                     anchor=MSO_ANCHOR.MIDDLE, spacing=1.5)
+                top += lh + 16
+
+            n = len(items)
+            avail = C_Y - top - 16
+            if n:
+                bw = text_w - 54 - 12
+                # 先按行数估算每条的「视觉重量」，再据总量决定字号：
+                # 条目多、文字长时自动缩字号，保证全部内容都能放进一页。
+                def _lines(txt, px):
+                    chars = max(8, int(bw / (px * 1.06)))
+                    return max(1, math.ceil(len(txt) / chars))
+
+                size = 22 if n <= 3 else (20 if n <= 4 else 18)
+                if has_img:
+                    size -= 2
+                dsize = max(12, size - 5)
+                while size > 13:
+                    units = [_lines(it["text"], size) + (_lines(it["detail"], dsize) if it["detail"] else 0)
+                             for it in items]
+                    gap = 8
+                    need = sum(units) * size * 1.45 + gap * (n - 1)
+                    if need <= avail:
+                        break
+                    size -= 1
+                    dsize = max(11, size - 5)
+                units = [_lines(it["text"], size) + (_lines(it["detail"], dsize) if it["detail"] else 0)
+                         for it in items]
+                gap = 8
+                usable = max(1, avail - gap * (n - 1))
+                total_u = sum(units) or 1
+                lh = size * 1.45
+                dlh = dsize * 1.5
+
+                y = top
+                num_w = 54
+                for i, it in enumerate(items):
+                    h = usable * units[i] / total_u
+                    if h < 34:
+                        break
+                    text(s, PAD_X, y + 2, num_w, 32, f"{i + 1:02d}", size + 2, MID, bold=True)
+                    tlines = _lines(it["text"], size)
+                    text(s, PAD_X + num_w, y, bw, tlines * lh + 4, it["text"],
+                         size, TXT, bold=bool(it["detail"]), spacing=1.4)
+                    if it["detail"]:
+                        dy = y + tlines * lh + 4
+                        text(s, PAD_X + num_w, dy, bw, max(20, h - (dy - y)),
+                             it["detail"], dsize, SUB, spacing=1.45)
+                    if i < n - 1:
+                        rect(s, PAD_X + num_w, y + h + gap / 2 - 1, bw, 1, LINE)
+                    y += h + gap
             footer(s)
 
         if note:
@@ -503,10 +688,15 @@ def build_pptx(spec: dict, out_path: str) -> str:
     # ==================== 结束页 ====================
     s = prs.slides.add_slide(blank)
     page_no += 1
-    rect(s, 0, 0, CANVAS_W, CANVAS_H, DARK)
-    rect(s, 0, CANVAS_H - 96, CANVAS_W, 96, MAIN)
-    text(s, 0, 268, CANVAS_W, 100, "谢谢！", 64, WHITE, bold=True, align=PP_ALIGN.CENTER)
-    text(s, 0, 372, CANVAS_W, 40, title_text, 22, RGBColor(0xA8, 0xC4, 0xE8),
+    if not use_template:
+        rect(s, 0, 0, CANVAS_W, CANVAS_H, DARK)
+        rect(s, 0, CANVAS_H - 96, CANVAS_W, 96, MAIN)
+    else:
+        rect(s, 0, CANVAS_H - 6, CANVAS_W, 6, MAIN)
+    text(s, 0, 268, CANVAS_W, 100, "谢谢！", 64,
+         WHITE if not use_template else MAIN, bold=True, align=PP_ALIGN.CENTER)
+    text(s, 0, 372, CANVAS_W, 40, title_text, 22,
+         RGBColor(0xA8, 0xC4, 0xE8) if not use_template else HINT,
          align=PP_ALIGN.CENTER)
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

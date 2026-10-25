@@ -21,7 +21,7 @@ from pathlib import Path
 
 from core.document_loader import build_chunks, load_documents, load_file_text
 from core.embeddings import get_embedding_provider
-from core.vector_store import VectorStore
+from core.vector_store import VectorStore, StaleIndexError
 
 #: 允许上传的资料类型
 SUPPORTED_EXTS = {".md", ".txt", ".pdf", ".csv", ".xlsx"}
@@ -164,6 +164,17 @@ class TeacherStore:
         self._chunk_size = int(os.getenv("CHUNK_SIZE", "500"))
         self._chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "100"))
 
+        # 换过 embedding（例如 mock → 远程真向量模型）时，旧索引维度与新向量对不上。
+        # 原始资料都还在 raw/ 里，直接按新维度重算即可 —— 不能让老师看到
+        # 「请执行 python scripts/build_index.py」这种面向开发者的报错。
+        # 注意：raw 为空时不重建，否则会把旧索引里的文本一起清掉（那是唯一副本）。
+        if self.store.count() > 0 and self.store.is_stale() and self.list_files():
+            try:
+                n = self.rebuild()
+                print(f"[teacher] {self.teacher_id} 索引与当前 embedding 不一致，已自动重建 {n} 个片段")
+            except Exception as e:  # noqa: BLE001
+                print(f"[warn] 教师 {self.teacher_id} 索引自动重建失败：{e}")
+
     # —————————————————— 资料管理 ——————————————————
     def add_file(self, filename: str, data: bytes) -> dict:
         """保存一个上传文件到 raw/ 并重建索引。返回该文件的信息。"""
@@ -247,7 +258,20 @@ class TeacherStore:
     def search(self, query: str, top_k: int = 6) -> list:
         if not query or self.store.count() == 0:
             return []
-        return self.store.similarity_search(query, top_k)
+        try:
+            return self.store.similarity_search(query, top_k)
+        except StaleIndexError:
+            # 兜底：__init__ 的预检可能因为并发/异常没生效，这里重建一次再试。
+            # raw 为空则不做重建（避免清掉旧索引里唯一的文本副本），
+            # 直接当作"没有可检索资料"，让生成流程继续 —— 少参考资料，
+            # 总好过整个课件生成失败。
+            if not self.list_files():
+                print(f"[warn] 教师 {self.teacher_id} 索引与当前 embedding 不一致且无原始资料，已跳过检索")
+                return []
+            n = self.rebuild()
+            if n == 0:
+                return []
+            return self.store.similarity_search(query, top_k)
 
     def build_context(self, query: str, top_k: int = 6, max_chars: int = 6000,
                       table_chars: int = 5000) -> tuple:
@@ -295,9 +319,13 @@ class TeacherStore:
         return "\n\n".join(parts), sources
 
     def stats(self) -> dict:
+        n = self.store.count()
+        # 索引与当前 embedding 不一致时，这些片段其实检索不到，报真实可用数量更诚实
+        usable = 0 if (n > 0 and self.store.is_stale()) else n
         return {
             "teacher_id": self.teacher_id,
             "files": len(self.list_files()),
-            "indexed_chunks": self.store.count(),
+            "indexed_chunks": usable,
+            "stale_index": bool(n > 0 and self.store.is_stale()),
             "embedding_model": getattr(self.embedding_provider, "model", ""),
         }

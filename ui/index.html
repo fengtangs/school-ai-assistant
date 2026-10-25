@@ -18,6 +18,9 @@
   header h1 { font-size: 16px; font-weight: 500; }
   header .sub { font-size: 12px; opacity: .85; margin-top: 2px; }
   .head-right { display: flex; align-items: center; gap: 14px; }
+  .link-btn { background: rgba(255,255,255,.16); color: #fff; border: none; border-radius: 8px;
+    padding: 6px 12px; font-size: 12px; cursor: pointer; text-decoration: none; }
+  .link-btn:hover { background: rgba(255,255,255,.28); }
   .agent-pick { display: flex; align-items: center; gap: 6px; font-size: 12px; }
   .agent-pick select {
     font-size: 13px; padding: 4px 8px; border-radius: 8px; border: none;
@@ -66,9 +69,148 @@
     border-radius: 8px; padding: 0 18px; font-size: 14px; cursor: pointer;
   }
   .inputbar button:disabled { opacity: .5; cursor: default; }
-  .toolbar { padding: 6px 8px; font-size: 12px; color: #888780; display: flex; gap: 14px; }
+  .toolbar { padding: 6px 8px; font-size: 12px; color: #888780; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   .toolbar a, .toolbar button { color: #185fa5; cursor: pointer; background: none; border: none; font-size: 12px; }
   .toolbar button:disabled { color: #b9b6aa; cursor: default; text-decoration: line-through; }
+  .toolbar .spacer { flex: 1; }
+
+  /* ===== 空状态：悬浮问题卡片 ===== */
+  #messages.vcenter { display: flex; flex-direction: column; justify-content: center; }
+  #messages.vcenter #welcome { width: 100%; }
+  #welcome { padding: 4px 2px 16px; }
+  .wel-hero { display: flex; align-items: center; gap: 16px; margin: 18px 0 22px; }
+  .wel-avatar {
+    width: 58px; height: 58px; flex: none; border-radius: 18px; display: grid; place-items: center;
+    font-size: 28px; background: #fff; border: .5px solid #d3d1c7;
+    box-shadow: 0 10px 24px rgba(24,95,165,.14);
+    animation: floaty 7s ease-in-out infinite;
+  }
+  .wel-hero h2 { font-size: 20px; font-weight: 600; letter-spacing: .2px; }
+  .wel-hero p { font-size: 13px; color: #888780; margin-top: 5px; line-height: 1.5; }
+  .wel-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding: 0 2px; }
+  .wel-bar span { font-size: 12px; color: #888780; letter-spacing: .3px; }
+  .wel-more {
+    font-size: 12px; color: #185fa5; background: rgba(24,95,165,.08); border: none;
+    border-radius: 999px; padding: 5px 12px; cursor: pointer; font-family: inherit;
+  }
+  .wel-more:hover { background: rgba(24,95,165,.16); }
+  .wel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 10px; }
+  .qcard {
+    display: flex; align-items: flex-start; gap: 10px; text-align: left; width: 100%;
+    background: #fff; border: .5px solid #d3d1c7; border-radius: 14px;
+    padding: 12px 13px; cursor: pointer; font-family: inherit; color: #2c2c2a;
+    box-shadow: 0 4px 14px rgba(44,44,42,.05);
+    transition: box-shadow .2s, border-color .2s, background .2s;
+    animation: fadeIn .5s both, floaty 8s ease-in-out infinite;
+  }
+  .qcard:hover, .qcard:focus-visible {
+    animation-play-state: paused;
+    border-color: #185fa5; background: #fdfdff;
+    box-shadow: 0 12px 28px rgba(24,95,165,.16);
+    outline: none;
+  }
+  .qc-ic { font-size: 17px; line-height: 1.15; flex: none; }
+  .qc-q {
+    flex: 1; font-size: 13.2px; line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .qc-go { font-size: 12px; color: #b9b6aa; flex: none; margin-top: 1px; transition: color .2s, transform .2s; }
+  .qcard:hover .qc-go { color: #185fa5; transform: translateX(2px); }
+  .wel-foot { margin-top: 16px; font-size: 11.5px; color: #9a978c; line-height: 1.6; }
+  .wel-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .wel-links a {
+    font-size: 12px; text-decoration: none; color: #185fa5; background: #fff;
+    border: .5px solid #d3d1c7; border-radius: 999px; padding: 6px 12px;
+    transition: border-color .18s, box-shadow .18s, transform .18s;
+  }
+  .wel-links a:hover {
+    border-color: #185fa5; box-shadow: 0 6px 16px rgba(24,95,165,.14); transform: translateY(-1px);
+  }
+  @keyframes floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  /* ===== 悬浮：常见问答 ===== */
+  .faq-fab {
+    position: fixed; right: 22px; bottom: 26px; z-index: 40; font-family: inherit;
+    display: flex; align-items: center; gap: 7px; font-size: 13px;
+    background: #185fa5; color: #fff; border: none; border-radius: 999px; padding: 11px 17px;
+    cursor: pointer; box-shadow: 0 10px 26px rgba(24,95,165,.34);
+    transition: transform .18s, box-shadow .18s, background .18s;
+  }
+  .faq-fab:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(24,95,165,.42); background: #14508c; }
+  .faq-fab .badge {
+    background: rgba(255,255,255,.24); border-radius: 999px; font-size: 11px; padding: 1px 6px;
+  }
+  .faq-panel {
+    position: fixed; right: 22px; bottom: 80px; z-index: 41;
+    width: min(384px, calc(100vw - 32px)); max-height: min(64vh, 540px);
+    background: #fff; border: .5px solid #d3d1c7; border-radius: 16px;
+    box-shadow: 0 20px 52px rgba(44,44,42,.2); display: none; flex-direction: column; overflow: hidden;
+  }
+  .faq-panel.open { display: flex; animation: popIn .2s ease-out; }
+  @keyframes popIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+  .faq-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px 10px; border-bottom: .5px solid #eeece3;
+  }
+  .faq-head b { font-size: 14px; font-weight: 600; }
+  .faq-head span { font-size: 11.5px; color: #9a978c; margin-left: 6px; font-weight: 400; }
+  .faq-x {
+    border: none; background: #f4f2ec; color: #7a776c; width: 24px; height: 24px;
+    border-radius: 8px; cursor: pointer; font-size: 13px; line-height: 1; font-family: inherit;
+  }
+  .faq-x:hover { background: #e8e5db; }
+  .faq-search { padding: 9px 14px; border-bottom: .5px solid #eeece3; }
+  .faq-search input {
+    width: 100%; border: .5px solid #dedcd2; border-radius: 9px; padding: 7px 10px;
+    font-size: 12.5px; font-family: inherit; outline: none; background: #faf9f4;
+  }
+  .faq-search input:focus { border-color: #185fa5; background: #fff; }
+  .faq-body { overflow-y: auto; padding: 6px 8px 10px; }
+  .fg-t {
+    font-size: 11.5px; color: #9a978c; letter-spacing: .4px;
+    padding: 10px 8px 5px; display: flex; align-items: center; gap: 6px;
+  }
+  .fq {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    background: none; border: none; font-family: inherit; color: #2c2c2a;
+    font-size: 12.8px; line-height: 1.45; padding: 8px 9px; border-radius: 9px; cursor: pointer;
+  }
+  .fq:hover { background: rgba(24,95,165,.08); color: #14508c; }
+  .fq .arr { margin-left: auto; color: #c9c6ba; font-size: 12px; }
+  .fq:hover .arr { color: #185fa5; }
+  .faq-empty { padding: 18px; text-align: center; font-size: 12.5px; color: #9a978c; }
+
+  /* 回答复制按钮 */
+  .msg { position: relative; width: fit-content; }
+  .copy {
+    position: absolute; top: 5px; right: 5px; opacity: 0; transition: opacity .18s;
+    font-size: 11px; font-family: inherit; color: #888780; background: #fff;
+    border: .5px solid #d3d1c7; border-radius: 6px; padding: 2px 7px; cursor: pointer;
+    box-shadow: 0 2px 6px rgba(44,44,42,.08);
+  }
+  .msg.bot:hover .copy { opacity: 1; }
+  .copy:hover { color: #185fa5; border-color: #185fa5; }
+
+  @media (max-width: 720px) {
+    header { flex-wrap: wrap; padding: 10px 12px; row-gap: 10px; }
+    header h1 { font-size: 15px; white-space: nowrap; }
+    header .sub { display: none; }
+    .head-right { width: 100%; flex-wrap: wrap; gap: 8px; }
+    .agent-pick select { max-width: 150px; }
+    .status { font-size: 11px; flex: none; }
+    .status span:not(.dot) { display: none; }   /* 窄屏只留连接状态圆点，避免撑出横向滚动 */
+    .wrap { padding: 10px; }
+    #faqTool { display: none; }
+    .faq-fab { right: 14px; bottom: 84px; padding: 10px 14px; font-size: 12px; }
+    .faq-panel { right: 12px; left: 12px; width: auto; bottom: 132px; max-height: 62vh; }
+    .wel-grid { grid-template-columns: 1fr; }
+    .wel-hero h2 { font-size: 17px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .qcard, .wel-avatar { animation: none !important; }
+    .faq-panel.open { animation: none; }
+  }
 </style>
 </head>
 <body>
@@ -78,6 +220,7 @@
     <div class="sub">本地大模型驱动 · 多智能体 RAG</div>
   </div>
   <div class="head-right">
+    <a class="link-btn" href="/homework/student" target="_blank">📚 我的作业</a>
     <div class="agent-pick">
       <span>智能体</span>
       <select id="agentSel"></select>
@@ -95,12 +238,29 @@
     <a href="/docs" target="_blank">API 文档</a>
     <a href="/teacher" target="_blank">👩‍🏫 教师工作台</a>
     <button id="rebuild">重建当前智能体知识库</button>
+    <span class="spacer"></span>
+    <button id="faqTool" type="button">💡 常见问答</button>
   </div>
-  <div id="messages"></div>
+  <div id="messages">
+    <div id="welcome"></div>
+  </div>
   <div class="inputbar">
     <textarea id="input" rows="1" placeholder="输入你的问题…"></textarea>
     <button id="send">发送</button>
   </div>
+</div>
+
+<button class="faq-fab" id="faqFab" type="button" aria-haspopup="dialog">
+  <span>💡</span><span>常见问答</span><span class="badge" id="faqCount">0</span>
+</button>
+
+<div class="faq-panel" id="faqPanel" role="dialog" aria-label="常见问答">
+  <div class="faq-head">
+    <div><b>常见问答</b><span id="faqScope"></span></div>
+    <button class="faq-x" id="faqClose" type="button" aria-label="关闭">✕</button>
+  </div>
+  <div class="faq-search"><input id="faqQuery" type="text" placeholder="搜索问题，如：宿舍、奖学金、认证…" /></div>
+  <div class="faq-body" id="faqBody"></div>
 </div>
 
 <script>
@@ -117,6 +277,286 @@ let currentAgent = null;
 let models = [];
 let currentModel = null;   // null = 跟随 .env 配置的默认模型
 
+/* ================= 常见问题库（按智能体区分） ================= */
+const FAQ_DATA = {
+  campus: {
+    icon: '🎓',
+    greet: '校园生活有问题，直接问我',
+    hint: '教务、住宿、奖助、请假、心理支持，答案都来自学校知识库',
+    groups: [
+      { title: '学习与教务', icon: '📘', items: [
+        '这学期的课表在哪里查询？',
+        '什么时候开始选课？',
+        '选课时间冲突了怎么办？',
+        '期末成绩什么时候公布？',
+        '对成绩有异议怎么申请复核？',
+        '挂科了怎么补考？补考不过要重修吗？',
+        '英语四六级怎么报名？',
+        '学校能考哪些职业资格证书？'
+      ]},
+      { title: '生活与服务', icon: '🏠', items: [
+        '宿舍熄灯时间是怎么规定的？',
+        '宿舍报修怎么申请？',
+        '食堂的开放时间是怎么安排的？',
+        '校园一卡通能用在哪些地方？丢了怎么补办？',
+        '图书馆的开放时间和借阅期限是多久？',
+        '校园网怎么上网？账号有问题找谁？',
+        '宿舍用电有哪些安全规定？',
+        '校园里遇到紧急情况该找谁？'
+      ]},
+      { title: '奖助与政策', icon: '🎖️', items: [
+        '国家奖学金的金额和评选条件是什么？',
+        '国家励志奖学金是怎么规定的？',
+        '国家助学金怎么申请？什么时候截止？',
+        '家庭经济困难认定需要准备什么材料？',
+        '校内综合奖学金怎么评定？'
+      ]},
+      { title: '管理与成长', icon: '🚀', items: [
+        '请假流程是怎样的？请假超过一周怎么办？',
+        '学生证丢了怎么补办？',
+        '旷课、考试作弊会有什么处分？',
+        '学校有哪些院系和专业？',
+        '信息工程学院开设哪些专业？都学什么课？',
+        '学校和华为有哪些合作？能考 HCIA 吗？',
+        '心理压力大可以去哪里咨询？'
+      ]}
+    ]
+  },
+  huajiyun: {
+    icon: '🤖',
+    greet: '华为 ICT 学习与认证，问我',
+    hint: '平台功能、认证路线、技术知识点、错题分析都在知识库里',
+    groups: [
+      { title: '平台使用', icon: '🧭', items: [
+        '华技云平台的账号怎么注册和登录？',
+        '智能督学模块怎么用？学习计划怎么制定？',
+        '云端实训环境打不开怎么办？',
+        '错题本在哪里看？怎么针对性练习？',
+        '平台上的课程进度和成绩怎么查看？'
+      ]},
+      { title: '认证学习', icon: '🏅', items: [
+        '华为 HCIA-Datacom 主要考哪些内容？',
+        'HCIA / HCIP / HCIE 全层级怎么规划学习路线？',
+        '零基础想考 HCIA 应该先学哪些内容？',
+        '平台考核成绩能和校内学分互认吗？'
+      ]},
+      { title: '技术知识点', icon: '🧩', items: [
+        'OSPF 邻居建立不起来一般是什么原因？',
+        'VLAN 和 Trunk 的配置思路是什么？',
+        'VPC、ECS、安全组之间是什么关系？',
+        'STP、ACL、NAT 的典型应用场景？',
+        'ArkTS 和鸿蒙应用开发怎么入门？'
+      ]},
+      { title: '学习支持', icon: '📈', items: [
+        '我这次模拟测试错得比较多，帮我分析一下薄弱点',
+        '帮我制定一个月的 HCIA 备考计划',
+        '云计算方向需要掌握哪些核心技能？'
+      ]}
+    ]
+  },
+  deepseek: {
+    icon: '💬',
+    greet: '随便问，不查知识库',
+    hint: '通用大模型对话，适合概念解释、写作润色、代码与计划类问题',
+    groups: [
+      { title: '概念解释', icon: '🧠', items: [
+        '用简单的话解释一下什么是云计算',
+        'TCP 和 UDP 有什么区别？举个例子',
+        '什么是大模型的上下文窗口？',
+        '什么是 RAG？它解决什么问题？'
+      ]},
+      { title: '学习与写作', icon: '✍️', items: [
+        '帮我制定一份两周的复习计划',
+        '把下面这段话改写得更正式一些',
+        '帮我写一篇 800 字的演讲稿',
+        '帮我把这段内容提炼成 5 条要点'
+      ]},
+      { title: '实用工具', icon: '🛠️', items: [
+        '帮我写一段 Python 读取 Excel 的代码',
+        'Excel 里怎么用函数统计各分数段人数？',
+        '帮我把这段话翻译成英文'
+      ]}
+    ]
+  },
+  teacher: {
+    icon: '👩‍🏫',
+    greet: '备课、教案、课件、作业，从这里开始',
+    hint: '教师助手在独立工作台里上传资料，可生成 docx 与 pptx',
+    groups: [
+      { title: '快速上手', icon: '🚪', items: [
+        '教师工作台怎么生成一份课件？',
+        '备课教案需要提供哪些资料？',
+        '怎么把学校模板套用到课件里？',
+        '生成的文件保存在哪里？怎么下载？'
+      ]},
+      { title: '作业与学情', icon: '📝', items: [
+        '怎么用 AI 出一套 100 分的作业？',
+        '学生作业怎么在线作答和自动批改？',
+        '学情分析里的正确率和及格率怎么算？',
+        '错题排行怎么帮助我调整教学重点？'
+      ]},
+      { title: '课堂应用', icon: '🎯', items: [
+        '怎么让课件内容更充实一些？',
+        '一节课的课件配几张图比较合适？',
+        '怎么根据学情给不同层次学生布置作业？'
+      ]}
+    ]
+  }
+};
+
+function faqFor(agentId) {
+  return FAQ_DATA[agentId] || FAQ_DATA.campus;
+}
+
+const welcomeEl = document.getElementById('welcome');
+const faqFab = document.getElementById('faqFab');
+const faqPanel = document.getElementById('faqPanel');
+const faqBody = document.getElementById('faqBody');
+const faqQuery = document.getElementById('faqQuery');
+
+let faqFlat = [];   // [{q, icon}]
+
+function hideWelcome() {
+  if (welcomeEl && welcomeEl.style.display !== 'none') {
+    welcomeEl.style.display = 'none';
+    messages.classList.remove('empty', 'vcenter');
+  }
+}
+
+function fitCenter() {
+  const isEmpty = !messages.querySelector('.msg');
+  messages.classList.toggle('empty', isEmpty);
+  if (!isEmpty) { messages.classList.remove('vcenter'); return; }
+  // 内容装得下才垂直居中，装不下就顶部对齐，避免溢出被裁切
+  messages.classList.toggle('vcenter', messages.scrollHeight <= messages.clientHeight + 2);
+}
+window.addEventListener('resize', () => setTimeout(fitCenter, 80));
+
+function askQuestion(q) {
+  if (!q) return;
+  input.value = q;
+  closeFaq();
+  send();
+}
+
+/* ---- 空状态：悬浮问题卡片 ---- */
+function pickRandom(list, n) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, Math.min(n, a.length));
+}
+
+function renderWelcome() {
+  if (!welcomeEl) return;
+  const d = faqFor(currentAgent);
+  const name = (agents.find(a => a.id === currentAgent) || {}).name || '助手';
+  const all = [];
+  d.groups.forEach(g => g.items.forEach(q => all.push({ q, icon: g.icon })));
+  faqFlat = all;
+
+  welcomeEl.style.display = messages.querySelector('.msg') ? 'none' : '';
+  welcomeEl.innerHTML =
+    '<div class="wel-hero">'
+    +   '<div class="wel-avatar">' + d.icon + '</div>'
+    +   '<div><h2>' + d.greet + '</h2><p>' + name + ' · ' + d.hint + '</p></div>'
+    + '</div>'
+    + '<div class="wel-bar"><span>你可以这样问</span>'
+    +   '<button class="wel-more" type="button" id="welMore">换一批 ↻</button></div>'
+    + '<div class="wel-grid" id="welGrid"></div>'
+    + '<div class="wel-links">'
+    +   '<a href="/homework/student" target="_blank">📚 我的作业</a>'
+    +   '<a href="/homework/teacher" target="_blank">📝 作业与学情</a>'
+    +   '<a href="/teacher" target="_blank">👩‍🏫 教师工作台</a>'
+    +   '<a href="/docs" target="_blank">📄 API 文档</a>'
+    + '</div>'
+    + '<div class="wel-foot">💡 点卡片直接提问 · Enter 发送 / Shift + Enter 换行 · 回答严格基于知识库，未覆盖时会如实告知</div>';
+
+  paintCards();
+  setTimeout(fitCenter, 30);
+  const more = document.getElementById('welMore');
+  if (more) more.onclick = paintCards;
+}
+
+function paintCards() {
+  const grid = document.getElementById('welGrid');
+  if (!grid) return;
+  const picks = pickRandom(faqFlat, 6);
+  grid.innerHTML = picks.map((it, i) =>
+    '<button class="qcard" type="button" style="animation-delay:'
+    + (i * 70) + 'ms,' + (-i * 0.8) + 's">'
+    + '<span class="qc-ic">' + it.icon + '</span>'
+    + '<span class="qc-q">' + it.q + '</span>'
+    + '<span class="qc-go">→</span>'
+    + '</button>'
+  ).join('');
+  grid.querySelectorAll('.qcard').forEach((el, i) => {
+    el.onclick = () => askQuestion(picks[i].q);
+  });
+}
+
+/* ---- 悬浮面板：常见问答 ---- */
+function renderFaqPanel() {
+  const d = faqFor(currentAgent);
+  const name = (agents.find(a => a.id === currentAgent) || {}).name || '助手';
+  const scope = document.getElementById('faqScope');
+  if (scope) scope.textContent = '· ' + name;
+  const badge = document.getElementById('faqCount');
+  if (badge) badge.textContent = faqFlat.length;
+
+  const kw = (faqQuery.value || '').trim().toLowerCase();
+  let html = '';
+  let shown = 0;
+  d.groups.forEach(g => {
+    const hit = g.items.filter(q => !kw || q.toLowerCase().includes(kw));
+    if (!hit.length) return;
+    shown += hit.length;
+    html += '<div class="fg"><div class="fg-t"><span>' + g.icon + '</span>' + g.title + '</div>';
+    hit.forEach(q => {
+      html += '<button class="fq" type="button" data-q="' + q.replace(/"/g, '&quot;') + '">'
+        + '<span>' + q + '</span><span class="arr">›</span></button>';
+    });
+    html += '</div>';
+  });
+  faqBody.innerHTML = shown ? html
+    : '<div class="faq-empty">没有匹配的问题，换个关键词试试，或者直接在下方输入框提问。</div>';
+
+  faqBody.querySelectorAll('.fq').forEach(el => {
+    el.onclick = () => askQuestion(el.dataset.q);
+  });
+}
+
+function openFaq() {
+  if (!faqPanel) return;
+  faqPanel.classList.add('open');
+  faqQuery.value = '';
+  renderFaqPanel();
+  setTimeout(() => faqQuery.focus(), 60);
+}
+
+function closeFaq() {
+  if (faqPanel) faqPanel.classList.remove('open');
+}
+
+if (faqFab) faqFab.onclick = () => {
+  faqPanel.classList.contains('open') ? closeFaq() : openFaq();
+};
+const faqCloseBtn = document.getElementById('faqClose');
+if (faqCloseBtn) faqCloseBtn.onclick = closeFaq;
+const faqToolBtn = document.getElementById('faqTool');
+if (faqToolBtn) faqToolBtn.onclick = openFaq;
+if (faqQuery) faqQuery.oninput = renderFaqPanel;
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && faqPanel.classList.contains('open')) closeFaq();
+});
+document.addEventListener('click', e => {
+  if (!faqPanel.classList.contains('open')) return;
+  if (faqPanel.contains(e.target) || faqFab.contains(e.target) || e.target === faqToolBtn) return;
+  closeFaq();
+});
+
 function addMsg(role, text, sources) {
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + role;
@@ -132,7 +572,30 @@ function addMsg(role, text, sources) {
   }
   messages.appendChild(wrap);
   messages.scrollTop = messages.scrollHeight;
+  hideWelcome();
+  if (role === 'bot') addCopyBtn(wrap);
   return wrap;
+}
+
+function addCopyBtn(wrap) {
+  const btn = document.createElement('button');
+  btn.className = 'copy';
+  btn.type = 'button';
+  btn.textContent = '复制';
+  btn.title = '复制这条回答';
+  btn.onclick = async (ev) => {
+    ev.stopPropagation();
+    const bubble = wrap.querySelector('.bubble');
+    const text = bubble ? bubble.textContent : '';
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = '已复制';
+    } catch (e) {
+      btn.textContent = '复制失败';
+    }
+    setTimeout(() => { btn.textContent = '复制'; }, 1400);
+  };
+  wrap.appendChild(btn);
 }
 
 async function loadAgents() {
@@ -153,6 +616,8 @@ async function loadAgents() {
   } catch (e) {
     agents = [];
   }
+  renderWelcome();
+  renderFaqPanel();
 }
 
 async function loadModels() {
@@ -325,8 +790,10 @@ function addStreamMsg(text) {
   wrap.appendChild(thinkBox);
   wrap.appendChild(bubble);
   wrap.appendChild(src);
+  addCopyBtn(wrap);
   messages.appendChild(wrap);
   messages.scrollTop = messages.scrollHeight;
+  hideWelcome();
   return { wrap, bubble, src, thinkBox, thinkBody, thinkSummary };
 }
 
@@ -334,6 +801,8 @@ agentSel.onchange = () => {
   currentAgent = agentSel.value;
   const a = agents.find(x => x.id === currentAgent);
   input.placeholder = '向「' + (a ? a.name : '助手') + '」提问…';
+  renderWelcome();          // 切换智能体后空状态问题卡片跟着换
+  renderFaqPanel();
   checkHealth();
 };
 
