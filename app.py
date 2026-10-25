@@ -238,11 +238,13 @@ def rebuild(q: RebuildReq = None):
 
 @app.on_event("startup")
 def _warm_up_indexes():
-    """启动时自动补齐空索引。
+    """启动时自动补齐/修复索引。
 
-    索引是落盘的，一旦 data/processed 被清掉或换了机器，重启后检索会一直返回空，
-    表现为「知识库里明明有这份文件，回答却说没有相关资料」。这里在启动时兜一次底，
-    只对「RAG 智能体且索引为 0」的做重建，有索引的直接跳过，不拖慢启动。
+    1) 索引为空（data/processed 被清、换机器）→ 建一次；
+    2) 索引存在但 embedding 配置变了（如 mock → 远程真向量，512 → 4096 维）
+       → 旧向量与新查询不可比，直接重算，避免用户提问时才撞见 StaleIndexError。
+
+    索引是落盘的，正常启动时两种情况都不会命中，几乎不增加启动耗时。
     """
     import time
 
@@ -252,11 +254,14 @@ def _warm_up_indexes():
             agent = get_agent(agent_id)
             if not agent.use_rag or agent.store is None:
                 continue
-            if agent.store.count() > 0:
+            empty = agent.store.count() == 0
+            stale = (not empty) and agent.store.is_stale()
+            if not empty and not stale:
                 continue
             t0 = time.time()
             n = agent.build_index()
-            print(f"[startup] {agent_id} 索引为空，已自动建立 {n} 个片段，耗时 {time.time() - t0:.2f}s")
+            why = "索引为空" if empty else "索引与当前 embedding 不一致"
+            print(f"[startup] {agent_id} {why}，已自动重建 {n} 个片段，耗时 {time.time() - t0:.2f}s")
         except Exception as e:  # noqa: BLE001
             print(f"[startup] {agent_id} 自动建索引失败：{e}")
 

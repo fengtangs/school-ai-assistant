@@ -45,6 +45,36 @@ class VectorStore:
     def dim(self):
         return None if self.embeddings is None else self.embeddings.shape[1]
 
+    def is_stale(self) -> bool:
+        """索引是否与当前 embedding 配置不匹配（换过 provider/模型/维度）。
+
+        只做静态判断，不调用远程接口：优先比 provider 名与模型名（custom 的维度
+        要真跑一次才知道，只能靠模型名区分）；mock/hf 这类本地实现还带 dim，
+        可以再比一次维度，多一层保险。
+
+        用途：启动/取用前先发现漂移，直接重建，而不是等用户点生成时才抛
+        StaleIndexError（那个报错对老师毫无意义）。
+        """
+        if self.embeddings is None or len(self.embeddings) == 0:
+            return False
+        if not self.meta:
+            return True   # 老索引没写元信息，无法确认来源，按需要重建处理
+
+        old_name = self.meta.get("embedding_provider") or ""
+        new_name = getattr(self.embedding_provider, "name", "") or ""
+        if old_name and new_name and old_name != new_name:
+            return True
+
+        old_model = self.meta.get("embedding_model") or ""
+        new_model = getattr(self.embedding_provider, "model", "") or ""
+        if old_model and new_model and old_model != new_model:
+            return True
+
+        cur_dim = getattr(self.embedding_provider, "dim", None)
+        if isinstance(cur_dim, int) and cur_dim > 0 and self.embeddings.shape[1] != cur_dim:
+            return True
+        return False
+
     def load_or_init(self):
         if os.path.exists(self.index_file):
             self._load()
